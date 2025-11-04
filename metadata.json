@@ -1,0 +1,5 @@
+{
+  "name": "Dynamic Contract Generator",
+  "description": "An application to generate, manage, and export business contracts from customizable templates. Users can select relevant clauses, fill in details, and save templates locally for reuse.",
+  "requestFramePermissions": []
+}
