@@ -103,10 +103,27 @@ const generateStyledHtmlForExport = (content: string): string => {
 const App: React.FC = () => {
     const [customTemplates, setCustomTemplates] = useLocalStorage<Template[]>('contract_custom_templates', []);
     const templates = useMemo(() => [...defaultTemplates, ...customTemplates], [customTemplates]);
-    
+
     const [selectedTemplateId, setSelectedTemplateId] = useState<string>('video_placement_default');
     const [templateName, setTemplateName] = useState('');
     const [templateContent, setTemplateContent] = useState('');
+
+    const selectTemplate = useCallback(
+        (templateId: string, nextCustomTemplates: Template[] = customTemplates) => {
+            const allTemplates = [...defaultTemplates, ...nextCustomTemplates];
+            const template = allTemplates.find(t => t.id === templateId);
+
+            if (!template) {
+                return false;
+            }
+
+            setSelectedTemplateId(template.id);
+            setTemplateName(template.name);
+            setTemplateContent(template.content);
+            return true;
+        },
+        [customTemplates]
+    );
     
     const [selectedSections, setSelectedSections] = useState<Record<string, boolean>>({});
     const [formData, setFormData] = useState<FormData>(initialFormData);
@@ -117,14 +134,10 @@ const App: React.FC = () => {
     const templateContentRef = useRef<HTMLTextAreaElement>(null);
 
     useEffect(() => {
-        const template = templates.find(t => t.id === selectedTemplateId);
-        if (template) {
-            setTemplateName(template.name);
-            setTemplateContent(template.content);
-        } else if (templates.length > 0) {
-            setSelectedTemplateId('video_placement_default');
+        if (!selectTemplate(selectedTemplateId)) {
+            selectTemplate('video_placement_default');
         }
-    }, [selectedTemplateId, templates]);
+    }, [selectedTemplateId, selectTemplate]);
 
     useEffect(() => {
         if (isTotalFeeManuallySet) return;
@@ -157,8 +170,9 @@ const App: React.FC = () => {
             return;
         }
         const newTemplate: Template = { id: crypto.randomUUID(), name: templateName, content: templateContent };
-        setCustomTemplates(prev => [...prev, newTemplate]);
-        setSelectedTemplateId(newTemplate.id);
+        const nextTemplates = [...customTemplates, newTemplate];
+        setCustomTemplates(nextTemplates);
+        selectTemplate(newTemplate.id, nextTemplates);
         alert('新範本已儲存');
     };
 
@@ -167,13 +181,13 @@ const App: React.FC = () => {
             alert('不能修改預設範本，請先「另存為新範本」');
             return;
         }
-        setCustomTemplates(prev =>
-            prev.map(t =>
-                t.id === selectedTemplateId
+        const updatedTemplates = customTemplates.map(t =>
+            t.id === selectedTemplateId
                 ? { ...t, name: templateName, content: templateContent }
                 : t
-            )
         );
+        setCustomTemplates(updatedTemplates);
+        selectTemplate(selectedTemplateId, updatedTemplates);
         alert('範本已更新');
     };
 
@@ -183,11 +197,13 @@ const App: React.FC = () => {
             return;
         }
 
-        const templateToDelete = customTemplates.find(t => t.id === selectedTemplateId);
-        if (!templateToDelete) {
+        const templateIndex = customTemplates.findIndex(t => t.id === selectedTemplateId);
+        if (templateIndex === -1) {
             alert('錯誤：找不到要刪除的範本，請重新整理後再試。');
             return;
         }
+
+        const templateToDelete = customTemplates[templateIndex];
 
         const confirmed = window.confirm(`確定要刪除範本 "${templateToDelete.name}" 嗎？`);
         if (!confirmed) {
@@ -197,25 +213,15 @@ const App: React.FC = () => {
         const updatedCustomTemplates = customTemplates.filter(t => t.id !== templateToDelete.id);
         setCustomTemplates(updatedCustomTemplates);
 
-        const fallbackTemplateId = updatedCustomTemplates.length > 0
-            ? updatedCustomTemplates[updatedCustomTemplates.length - 1].id
+        const hasRemainingTemplates = updatedCustomTemplates.length > 0;
+        const fallbackIndex = hasRemainingTemplates
+            ? Math.min(templateIndex, updatedCustomTemplates.length - 1)
+            : -1;
+        const fallbackTemplateId = hasRemainingTemplates
+            ? updatedCustomTemplates[fallbackIndex].id
             : 'video_placement_default';
 
-        setSelectedTemplateId(fallbackTemplateId);
-
-        if (fallbackTemplateId === 'video_placement_default') {
-            const defaultTemplate = defaultTemplates.find(t => t.id === fallbackTemplateId);
-            if (defaultTemplate) {
-                setTemplateName(defaultTemplate.name);
-                setTemplateContent(defaultTemplate.content);
-            }
-        } else {
-            const fallbackTemplate = updatedCustomTemplates.find(t => t.id === fallbackTemplateId);
-            if (fallbackTemplate) {
-                setTemplateName(fallbackTemplate.name);
-                setTemplateContent(fallbackTemplate.content);
-            }
-        }
+        selectTemplate(fallbackTemplateId, updatedCustomTemplates);
 
         alert(`範本 "${templateToDelete.name}" 已刪除`);
     };
