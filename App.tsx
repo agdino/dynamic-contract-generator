@@ -167,10 +167,10 @@ const App: React.FC = () => {
             alert('不能修改預設範本，請先「另存為新範本」');
             return;
         }
-        setCustomTemplates(prev => 
-            prev.map(t => 
-                t.id === selectedTemplateId 
-                ? { ...t, name: templateName, content: templateContent } 
+        setCustomTemplates(prev =>
+            prev.map(t =>
+                t.id === selectedTemplateId
+                ? { ...t, name: templateName, content: templateContent }
                 : t
             )
         );
@@ -182,17 +182,42 @@ const App: React.FC = () => {
             alert('不能刪除預設範本');
             return;
         }
-    
+
         const templateToDelete = customTemplates.find(t => t.id === selectedTemplateId);
         if (!templateToDelete) {
             alert('錯誤：找不到要刪除的範本，請重新整理後再試。');
             return;
         }
-    
-        if (window.confirm(`確定要刪除範本 "${templateToDelete.name}" 嗎？`)) {
-            setCustomTemplates(prev => prev.filter(t => t.id !== selectedTemplateId));
-            setSelectedTemplateId('video_placement_default');
+
+        const confirmed = window.confirm(`確定要刪除範本 "${templateToDelete.name}" 嗎？`);
+        if (!confirmed) {
+            return;
         }
+
+        const updatedCustomTemplates = customTemplates.filter(t => t.id !== templateToDelete.id);
+        setCustomTemplates(updatedCustomTemplates);
+
+        const fallbackTemplateId = updatedCustomTemplates.length > 0
+            ? updatedCustomTemplates[updatedCustomTemplates.length - 1].id
+            : 'video_placement_default';
+
+        setSelectedTemplateId(fallbackTemplateId);
+
+        if (fallbackTemplateId === 'video_placement_default') {
+            const defaultTemplate = defaultTemplates.find(t => t.id === fallbackTemplateId);
+            if (defaultTemplate) {
+                setTemplateName(defaultTemplate.name);
+                setTemplateContent(defaultTemplate.content);
+            }
+        } else {
+            const fallbackTemplate = updatedCustomTemplates.find(t => t.id === fallbackTemplateId);
+            if (fallbackTemplate) {
+                setTemplateName(fallbackTemplate.name);
+                setTemplateContent(fallbackTemplate.content);
+            }
+        }
+
+        alert(`範本 "${templateToDelete.name}" 已刪除`);
     };
     
     const handleSectionToggle = (sectionId: string) => {
@@ -697,9 +722,9 @@ const App: React.FC = () => {
                                         className="w-full bg-gray-900 border border-gray-600 rounded-md p-3 text-gray-300 font-mono text-sm focus:ring-2 focus:ring-blue-500" />
                                 </div>
                                 <div className="flex flex-wrap gap-2 justify-end">
-                                    <button onClick={saveNewTemplate} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition">另存為新範本</button>
-                                    <button onClick={updateTemplate} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition disabled:bg-gray-500" disabled={defaultTemplateIds.includes(selectedTemplateId)}>更新目前範本</button>
-                                    <button onClick={deleteTemplate} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition disabled:bg-gray-500" disabled={defaultTemplateIds.includes(selectedTemplateId)}>刪除目前範本</button>
+                                    <button onClick={saveNewTemplate} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition" type="button">另存為新範本</button>
+                                    <button onClick={updateTemplate} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition disabled:bg-gray-500" disabled={defaultTemplateIds.includes(selectedTemplateId)} type="button">更新目前範本</button>
+                                    <button onClick={deleteTemplate} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition disabled:bg-gray-500" disabled={defaultTemplateIds.includes(selectedTemplateId)} type="button">刪除目前範本</button>
                                 </div>
                             </div>
                         )}
