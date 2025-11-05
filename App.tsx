@@ -1012,36 +1012,48 @@ const App: React.FC = () => {
         });
     
         const finalLines = processedContent.split('\n');
-        const counters: { [key: number]: number } = {};
-        const levelPrefixes: { [key: number]: string } = {};
+
+        let secondLevelCounter = 0;
+        let currentSecondLevelNumber = '';
+        let thirdLevelCounter = 0;
 
         const renumberedLines = finalLines.map(line => {
-            const match = line.match(/^(\s*)(\d+(?:\.\d+)*)\.?\s+/);
-            if (!match) return line;
+            const trimmedLine = line.trim();
 
-            const indent = match[1].length;
-            const numberString = match[2];
-            const level = numberString.split('.').length;
-
-            if (!counters[level]) counters[level] = 0;
-            
-            for (let i = level + 1; i <= Object.keys(counters).length; i++) {
-                counters[i] = 0;
+            if (/^[一二三四五六七八九十]+、/.test(trimmedLine)) {
+                secondLevelCounter = 0;
+                currentSecondLevelNumber = '';
+                thirdLevelCounter = 0;
+                return line;
             }
 
-            counters[level]++;
+            const secondLevelMatch = line.match(/^(\s*)(\d+)([\.．、])(\s+)/);
+            if (secondLevelMatch) {
+                secondLevelCounter += 1;
+                currentSecondLevelNumber = `${secondLevelCounter}`;
+                thirdLevelCounter = 0;
 
-            let newNumber = '';
-            if (level === 1) {
-                newNumber = `${counters[level]}`;
-                levelPrefixes[level] = newNumber;
-            } else {
-                const parentPrefix = levelPrefixes[level-1] || '1';
-                newNumber = `${parentPrefix}.${counters[level]}`;
-                levelPrefixes[level] = newNumber;
+                const leadingWhitespace = secondLevelMatch[1];
+                const punctuation = secondLevelMatch[3];
+                const spacing = secondLevelMatch[4];
+                const restOfLine = line.slice(secondLevelMatch[0].length);
+
+                return `${leadingWhitespace}${currentSecondLevelNumber}${punctuation}${spacing}${restOfLine}`;
             }
-            
-            return line.replace(numberString, newNumber);
+
+            const thirdLevelMatch = line.match(/^(\s*)(\d+)\.(\d+)(\s+)/);
+            if (thirdLevelMatch && currentSecondLevelNumber) {
+                thirdLevelCounter += 1;
+
+                const leadingWhitespace = thirdLevelMatch[1];
+                const spacing = thirdLevelMatch[4];
+                const restOfLine = line.slice(thirdLevelMatch[0].length);
+                const newNumber = `${currentSecondLevelNumber}.${thirdLevelCounter}`;
+
+                return `${leadingWhitespace}${newNumber}${spacing}${restOfLine}`;
+            }
+
+            return line;
         });
 
         let finalContent = renumberedLines.join('\n');
