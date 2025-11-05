@@ -117,7 +117,8 @@ const encodeSharePayload = (payload: SharePayload): string => {
 };
 
 const decodeSharePayload = (encoded: string): SharePayload => {
-    const binary = atob(encoded);
+    const normalized = encoded.replace(/\s/g, '+');
+    const binary = atob(normalized);
     const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
     const decoder = new TextDecoder();
     return JSON.parse(decoder.decode(bytes)) as SharePayload;
@@ -929,7 +930,7 @@ const App: React.FC = () => {
         };
 
         const encoded = encodeSharePayload(payload);
-        const shareUrl = `${window.location.origin}${window.location.pathname}?share=${encoded}`;
+        const shareUrl = `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(encoded)}`;
 
         const previewWindow = window.open(shareUrl, '_blank', 'noopener');
         if (!previewWindow) {
