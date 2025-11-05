@@ -241,95 +241,69 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
     loadingIndicator.style.zIndex = '10000';
     document.body.appendChild(loadingIndicator);
 
-    const pageRenderer = document.createElement('div');
-
     try {
-        document.body.appendChild(pageRenderer);
         const { jsPDF } = jspdfLib;
         const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
 
         const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = pdf.internal.pageSize.getHeight();
         const margin = 15;
         const contentWidthMm = pdfWidth - margin * 2;
-        const contentHeightMm = pdfHeight - margin * 2;
+        const contentHeightMm = pdf.internal.pageSize.getHeight() - margin * 2;
 
-        const mmToPxRatio = (() => {
-            const d = document.createElement('div');
-            d.style.position = 'absolute';
-            d.style.top = '-9999px';
-            d.style.width = '100mm';
-            document.body.appendChild(d);
-            const px = d.offsetWidth;
-            document.body.removeChild(d);
-            return px / 100;
-        })();
-
-        const contentHeightPx = contentHeightMm * mmToPxRatio;
-
-        const sourceChildren = Array.from(sourceElement.children).filter(
-            (node): node is HTMLElement => node instanceof HTMLElement
-        );
-
-        if (!sourceChildren.length) {
-            throw new Error('Contract content container not found.');
-        }
-
-        pageRenderer.style.position = 'absolute';
-        pageRenderer.style.left = '-9999px';
-        pageRenderer.style.top = '0';
-        pageRenderer.style.width = `${contentWidthMm}mm`;
-        pageRenderer.style.boxSizing = 'border-box';
-
-        const referenceNode = sourceChildren[0];
-        const computedStyle = window.getComputedStyle(referenceNode);
-        const styleKeys = ['fontFamily', 'fontSize', 'lineHeight', 'color', 'backgroundColor', 'padding'] as const;
-        styleKeys.forEach(prop => {
-            const value = (computedStyle as any)[prop];
-            if (value) {
-                (pageRenderer.style as any)[prop] = value;
-            }
+        const canvas = await html2canvas(sourceElement, {
+            scale: 2,
+            backgroundColor: '#ffffff',
+            useCORS: true,
+            scrollY: -window.scrollY
         });
-        pageRenderer.style.backgroundColor = computedStyle.backgroundColor || '#ffffff';
 
-        const renderPage = async (container: HTMLElement, isFirstPage: boolean) => {
-            const canvas = await html2canvas(container, {
-                scale: 2,
-                useCORS: true,
-                height: container.scrollHeight,
-                width: container.scrollWidth
-            });
-            const imgData = canvas.toDataURL('image/png');
-            const imgProps = pdf.getImageProperties(imgData);
-            const imgHeight = (imgProps.height * contentWidthMm) / imgProps.width;
-            if (!isFirstPage) {
+        let pageHeightPx = Math.floor((canvas.width * contentHeightMm) / contentWidthMm);
+        if (pageHeightPx <= 0) {
+            pageHeightPx = canvas.height;
+        }
+        const totalPages = Math.ceil(canvas.height / pageHeightPx);
+
+        let pageIndex = 0;
+        while (pageIndex < totalPages) {
+            const startPx = pageIndex * pageHeightPx;
+            const sliceHeight = Math.min(pageHeightPx, canvas.height - startPx);
+
+            if (sliceHeight <= 0) {
+                break;
+            }
+
+            const pageCanvas = document.createElement('canvas');
+            pageCanvas.width = canvas.width;
+            pageCanvas.height = sliceHeight;
+            const ctx = pageCanvas.getContext('2d');
+
+            if (!ctx) {
+                throw new Error('無法產生 PDF 畫布。');
+            }
+
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
+            ctx.drawImage(
+                canvas,
+                0,
+                startPx,
+                canvas.width,
+                sliceHeight,
+                0,
+                0,
+                pageCanvas.width,
+                pageCanvas.height
+            );
+
+            const imgData = pageCanvas.toDataURL('image/jpeg', 0.85);
+            const imgHeightMm = (pageCanvas.height * contentWidthMm) / pageCanvas.width;
+
+            if (pageIndex > 0) {
                 pdf.addPage();
             }
-            pdf.addImage(imgData, 'PNG', margin, margin, contentWidthMm, imgHeight);
-        };
 
-        const allChildren = sourceChildren;
-        let isFirstPage = true;
-
-        for (const child of allChildren) {
-            const clonedChild = child.cloneNode(true) as HTMLElement;
-            pageRenderer.appendChild(clonedChild);
-
-            if (pageRenderer.offsetHeight > contentHeightPx) {
-                pageRenderer.removeChild(clonedChild);
-
-                if (pageRenderer.children.length > 0) {
-                    await renderPage(pageRenderer, isFirstPage);
-                    isFirstPage = false;
-                    pageRenderer.innerHTML = '';
-                }
-
-                pageRenderer.appendChild(clonedChild);
-            }
-        }
-
-        if (pageRenderer.children.length > 0) {
-            await renderPage(pageRenderer, isFirstPage);
+            pdf.addImage(imgData, 'JPEG', margin, margin, contentWidthMm, imgHeightMm);
+            pageIndex += 1;
         }
 
         return pdf.output('blob');
@@ -338,9 +312,6 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
         alert('生成 PDF 時發生錯誤，請檢查主控台以獲取更多資訊。');
         return null;
     } finally {
-        if (pageRenderer.parentNode === document.body) {
-            document.body.removeChild(pageRenderer);
-        }
         if (loadingIndicator.parentNode === document.body) {
             document.body.removeChild(loadingIndicator);
         }
