@@ -3,7 +3,7 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { Template, FormData, ProductCombo, Section } from './types';
 import { SECTIONS, VIDEO_PLACEMENT_TEMPLATE_CONTENT, PROFIT_SHARING_TEMPLATE_CONTENT } from './constants';
 import { useLocalStorage } from './hooks/useLocalStorage';
-import { TrashIcon, DownloadIcon } from './components/icons';
+import { TrashIcon, DownloadIcon, ShareIcon } from './components/icons';
 
 const initialFormData: FormData = {
   '立約人': '', '平台': 'YouTube', '頻道': '', '推廣產品': '', '提供產品': '', '遊戲主題': '',
@@ -100,6 +100,365 @@ const generateStyledHtmlForExport = (content: string): string => {
 };
 
 
+interface SharePayload {
+    id: string;
+    content: string;
+    createdAt: number;
+}
+
+const encodeSharePayload = (payload: SharePayload): string => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(JSON.stringify(payload));
+    let binary = '';
+    data.forEach(byte => {
+        binary += String.fromCharCode(byte);
+    });
+    return btoa(binary);
+};
+
+const decodeSharePayload = (encoded: string): SharePayload => {
+    const binary = atob(encoded);
+    const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+    const decoder = new TextDecoder();
+    return JSON.parse(decoder.decode(bytes)) as SharePayload;
+};
+
+const generatePdfBlobFromElement = async (element: HTMLElement): Promise<Blob | null> => {
+    const jspdfLib = (window as any).jspdf;
+    const html2canvas = (window as any).html2canvas;
+
+    if (!jspdfLib || !html2canvas) {
+        alert('PDF 生成工具尚未載入，請稍後再試。');
+        return null;
+    }
+
+    const { jsPDF } = jspdfLib;
+    const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+
+    const pdfWidth = pdf.internal.pageSize.getWidth();
+    const pdfHeight = pdf.internal.pageSize.getHeight();
+    const margin = 10;
+    const usableWidth = pdfWidth - margin * 2;
+    const usableHeight = pdfHeight - margin * 2;
+
+    const canvas = await html2canvas(element, {
+        scale: 2,
+        backgroundColor: '#ffffff',
+        useCORS: true
+    });
+
+    const imgData = canvas.toDataURL('image/png');
+    const imgHeight = (canvas.height * usableWidth) / canvas.width;
+    let heightLeft = imgHeight;
+    let position = margin;
+
+    pdf.addImage(imgData, 'PNG', margin, position, usableWidth, imgHeight);
+    heightLeft -= usableHeight;
+
+    while (heightLeft > 0) {
+        position = position - usableHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'PNG', margin, position, usableWidth, imgHeight);
+        heightLeft -= usableHeight;
+    }
+
+    return pdf.output('blob');
+};
+
+const SignatureModal: React.FC<{ onClose: () => void; onConfirm: (dataUrl: string) => void; }> = ({ onClose, onConfirm }) => {
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+    const lastPointRef = useRef<{ x: number; y: number } | null>(null);
+    const [isDrawing, setIsDrawing] = useState(false);
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = '#111827';
+        ctx.lineWidth = 2;
+        ctx.lineCap = 'round';
+    }, []);
+
+    const getCanvasCoordinates = (event: React.PointerEvent<HTMLCanvasElement>) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return null;
+        const rect = canvas.getBoundingClientRect();
+        return {
+            x: ((event.clientX - rect.left) / rect.width) * canvas.width,
+            y: ((event.clientY - rect.top) / rect.height) * canvas.height
+        };
+    };
+
+    const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
+        const point = getCanvasCoordinates(event);
+        if (!point) return;
+        setIsDrawing(true);
+        lastPointRef.current = point;
+        event.currentTarget.setPointerCapture(event.pointerId);
+    };
+
+    const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+        if (!isDrawing) return;
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext('2d');
+        const point = getCanvasCoordinates(event);
+        if (!canvas || !ctx || !point || !lastPointRef.current) return;
+
+        ctx.beginPath();
+        ctx.moveTo(lastPointRef.current.x, lastPointRef.current.y);
+        ctx.lineTo(point.x, point.y);
+        ctx.stroke();
+        lastPointRef.current = point;
+        event.preventDefault();
+    };
+
+    const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
+        if (!isDrawing) return;
+        setIsDrawing(false);
+        lastPointRef.current = null;
+        event.currentTarget.releasePointerCapture(event.pointerId);
+    };
+
+    const handleClear = () => {
+        const canvas = canvasRef.current;
+        const ctx = canvas?.getContext('2d');
+        if (!canvas || !ctx) return;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+    };
+
+    const handleConfirm = () => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        onConfirm(canvas.toDataURL('image/png'));
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+            <div className="bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-3xl space-y-4">
+                <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold text-gray-100">簽名板</h3>
+                    <button onClick={onClose} className="text-sm text-gray-400 hover:text-gray-200 transition">關閉</button>
+                </div>
+                <p className="text-sm text-gray-300">請使用滑鼠或觸控板於下方空白區域簽名，簽名完成後點擊「確認簽名」。</p>
+                <div className="bg-white rounded-md overflow-hidden border border-gray-600">
+                    <canvas
+                        ref={canvasRef}
+                        width={900}
+                        height={300}
+                        className="w-full h-64 touch-none"
+                        onPointerDown={handlePointerDown}
+                        onPointerMove={handlePointerMove}
+                        onPointerUp={handlePointerUp}
+                        onPointerLeave={handlePointerUp}
+                    />
+                </div>
+                <div className="flex items-center justify-between">
+                    <button onClick={handleClear} className="text-sm text-blue-300 hover:text-blue-200 transition">清除重畫</button>
+                    <div className="space-x-3">
+                        <button onClick={onClose} className="px-4 py-2 rounded-md border border-gray-600 text-gray-300 hover:bg-gray-700 transition">取消</button>
+                        <button onClick={handleConfirm} className="px-4 py-2 rounded-md bg-blue-600 text-white font-semibold hover:bg-blue-500 transition">確認簽名</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const SharedContractView: React.FC<{ payload: SharePayload; onBack: () => void; }> = ({ payload, onBack }) => {
+    const [isSignatureModalOpen, setIsSignatureModalOpen] = useState(false);
+    const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
+    const [signaturePlacement, setSignaturePlacement] = useState({ x: 40, y: 40, scale: 1 });
+    const [isDraggingSignature, setIsDraggingSignature] = useState(false);
+    const contractRef = useRef<HTMLDivElement>(null);
+    const dragOffset = useRef({ x: 0, y: 0 });
+
+    const shareLink = useMemo(() => window.location.href, []);
+
+    const handleSignatureConfirm = (dataUrl: string) => {
+        setSignatureDataUrl(dataUrl);
+        setSignaturePlacement({ x: 40, y: 40, scale: 1 });
+        setIsSignatureModalOpen(false);
+    };
+
+    const handlePointerDown = (event: React.PointerEvent<HTMLImageElement>) => {
+        if (!contractRef.current) return;
+        const imageRect = event.currentTarget.getBoundingClientRect();
+        dragOffset.current = {
+            x: event.clientX - imageRect.left,
+            y: event.clientY - imageRect.top
+        };
+        setIsDraggingSignature(true);
+        event.currentTarget.setPointerCapture(event.pointerId);
+        event.preventDefault();
+    };
+
+    const handlePointerMove = (event: React.PointerEvent<HTMLImageElement>) => {
+        if (!isDraggingSignature || !contractRef.current) return;
+        const contractRect = contractRef.current.getBoundingClientRect();
+        const newX = event.clientX - contractRect.left - dragOffset.current.x;
+        const newY = event.clientY - contractRect.top - dragOffset.current.y;
+        setSignaturePlacement(prev => ({ ...prev, x: newX, y: newY }));
+    };
+
+    const handlePointerUp = (event: React.PointerEvent<HTMLImageElement>) => {
+        if (!isDraggingSignature) return;
+        setIsDraggingSignature(false);
+        event.currentTarget.releasePointerCapture(event.pointerId);
+    };
+
+    const handleShareToLine = async () => {
+        if (!contractRef.current) return;
+        if (!signatureDataUrl) {
+            alert('請先簽名並將簽名放置於合約中。');
+            return;
+        }
+
+        const blob = await generatePdfBlobFromElement(contractRef.current);
+        if (!blob) return;
+
+        const file = new File([blob], `signed-contract-${payload.id}.pdf`, { type: 'application/pdf' });
+        const nav = navigator as any;
+
+        if (nav.share && typeof nav.share === 'function' && (!nav.canShare || nav.canShare({ files: [file] }))) {
+            try {
+                await nav.share({ files: [file], text: '簽署完成的合約 PDF' });
+            } catch (error) {
+                console.error('Share failed', error);
+                alert('分享失敗，請確認裝置是否支援分享。');
+            }
+            return;
+        }
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `signed-contract-${payload.id}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+        alert('已下載包含簽名的 PDF，請於 LINE 中手動分享該檔案。');
+    };
+
+    const handleDownloadSignedPdf = async () => {
+        if (!contractRef.current) return;
+        const blob = await generatePdfBlobFromElement(contractRef.current);
+        if (!blob) return;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `signed-contract-${payload.id}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
+    const copyShareLink = async () => {
+        if (navigator.clipboard?.writeText) {
+            try {
+                await navigator.clipboard.writeText(shareLink);
+                alert('分享連結已複製。');
+                return;
+            } catch (error) {
+                console.warn('Clipboard copy failed', error);
+            }
+        }
+        window.prompt('請複製分享連結', shareLink);
+    };
+
+    return (
+        <div className="min-h-screen bg-gray-900 text-gray-100 p-4 sm:p-6 lg:p-8">
+            <div className="max-w-4xl mx-auto space-y-6">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h1 className="text-3xl font-bold text-blue-300">合約簽署頁面</h1>
+                        <p className="text-sm text-gray-400 mt-1">分享時間：{new Date(payload.createdAt).toLocaleString()}</p>
+                    </div>
+                    <button onClick={onBack} className="px-4 py-2 rounded-md border border-gray-600 text-gray-300 hover:bg-gray-800 transition">返回合約生成器</button>
+                </div>
+
+                <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-3">
+                    <h2 className="text-lg font-semibold text-gray-100">分享連結</h2>
+                    <p className="text-sm break-all text-gray-300">{shareLink}</p>
+                    <button onClick={copyShareLink} className="text-sm text-blue-300 hover:text-blue-200 transition">複製分享連結</button>
+                </div>
+
+                <div className="space-y-4">
+                    <button
+                        onClick={() => setIsSignatureModalOpen(true)}
+                        className="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-md transition"
+                    >
+                        確認並簽名
+                    </button>
+                    {signatureDataUrl && (
+                        <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-3">
+                            <h3 className="text-base font-semibold text-gray-100">簽名調整</h3>
+                            <p className="text-sm text-gray-300">拖曳簽名即可移動位置，使用下方滑桿調整大小。</p>
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                                <label className="text-sm text-gray-300">簽名大小</label>
+                                <input
+                                    type="range"
+                                    min={0.5}
+                                    max={2.5}
+                                    step={0.1}
+                                    value={signaturePlacement.scale}
+                                    onChange={(e) => setSignaturePlacement(prev => ({ ...prev, scale: parseFloat(e.target.value) }))}
+                                    className="flex-1"
+                                />
+                                <div className="flex gap-2">
+                                    <button onClick={() => setIsSignatureModalOpen(true)} className="px-3 py-1 text-sm rounded border border-gray-600 text-gray-300 hover:bg-gray-700 transition">重新簽名</button>
+                                    <button onClick={() => setSignatureDataUrl(null)} className="px-3 py-1 text-sm rounded border border-red-500 text-red-300 hover:bg-red-500/20 transition">移除簽名</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <div ref={contractRef} className="relative">
+                    <ContractRenderer content={payload.content} />
+                    {signatureDataUrl && (
+                        <img
+                            src={signatureDataUrl}
+                            alt="簽名"
+                            className="absolute top-0 left-0 cursor-move select-none"
+                            style={{
+                                transform: `translate(${signaturePlacement.x}px, ${signaturePlacement.y}px) scale(${signaturePlacement.scale})`,
+                                transformOrigin: 'top left'
+                            }}
+                            onPointerDown={handlePointerDown}
+                            onPointerMove={handlePointerMove}
+                            onPointerUp={handlePointerUp}
+                            onPointerLeave={handlePointerUp}
+                        />
+                    )}
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                    <button onClick={handleDownloadSignedPdf} className="flex items-center justify-center gap-2 px-5 py-3 rounded-md bg-green-600 hover:bg-green-500 text-white font-semibold transition">
+                        <DownloadIcon /> 下載簽署 PDF
+                    </button>
+                    <button onClick={handleShareToLine} className="flex items-center justify-center gap-2 px-5 py-3 rounded-md bg-green-500/20 border border-green-400 text-green-200 hover:bg-green-500/30 transition">
+                        <ShareIcon /> 分享至 LINE
+                    </button>
+                </div>
+            </div>
+
+            {isSignatureModalOpen && (
+                <SignatureModal
+                    onClose={() => setIsSignatureModalOpen(false)}
+                    onConfirm={handleSignatureConfirm}
+                />
+            )}
+        </div>
+    );
+};
+
+
 const App: React.FC = () => {
     const [customTemplates, setCustomTemplates] = useLocalStorage<Template[]>('contract_custom_templates', []);
     const templates = useMemo(() => [...defaultTemplates, ...customTemplates], [customTemplates]);
@@ -113,7 +472,18 @@ const App: React.FC = () => {
     const [generatedContract, setGeneratedContract] = useState('');
     const [activeTab, setActiveTab] = useState('generate');
     const [isTotalFeeManuallySet, setIsTotalFeeManuallySet] = useState(false);
-    
+    const [shareViewPayload, setShareViewPayload] = useState<SharePayload | null>(() => {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            const shareParam = params.get('share');
+            if (!shareParam) return null;
+            return decodeSharePayload(shareParam);
+        } catch (error) {
+            console.error('Failed to parse initial share payload', error);
+            return null;
+        }
+    });
+
     const templateContentRef = useRef<HTMLTextAreaElement>(null);
 
     useEffect(() => {
@@ -150,7 +520,46 @@ const App: React.FC = () => {
         selectedSections['profit_sharing'],
         isTotalFeeManuallySet
     ]);
+
+    useEffect(() => {
+        const syncShareState = () => {
+            const params = new URLSearchParams(window.location.search);
+            const shareParam = params.get('share');
+
+            if (!shareParam) {
+                setShareViewPayload(null);
+                return;
+            }
+
+            try {
+                const decoded = decodeSharePayload(shareParam);
+                setShareViewPayload(decoded);
+            } catch (error) {
+                console.error('Failed to decode share payload', error);
+                alert('分享連結無效或已損毀，請重新取得。');
+                params.delete('share');
+                const newSearch = params.toString();
+                const newUrl = newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname;
+                window.history.replaceState(null, '', newUrl);
+                setShareViewPayload(null);
+            }
+        };
+
+        syncShareState();
+        const handlePopState = () => syncShareState();
+        window.addEventListener('popstate', handlePopState);
+        return () => window.removeEventListener('popstate', handlePopState);
+    }, []);
     
+    const clearShareView = useCallback(() => {
+        const params = new URLSearchParams(window.location.search);
+        params.delete('share');
+        const newSearch = params.toString();
+        const newUrl = newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname;
+        window.history.replaceState(null, '', newUrl);
+        setShareViewPayload(null);
+    }, [setShareViewPayload]);
+
     const saveNewTemplate = () => {
         if (!templateName.trim()) {
             alert('範本名稱不能為空');
@@ -506,6 +915,42 @@ const App: React.FC = () => {
             document.body.removeChild(loadingIndicator);
         }
     };
+
+    const handleCreateShareLink = useCallback(async () => {
+        if (!generatedContract) {
+            alert('請先生成合約後再分享。');
+            return;
+        }
+
+        const payload: SharePayload = {
+            id: crypto.randomUUID(),
+            content: generatedContract,
+            createdAt: Date.now()
+        };
+
+        const encoded = encodeSharePayload(payload);
+        const shareUrl = `${window.location.origin}${window.location.pathname}?share=${encoded}`;
+
+        const previewWindow = window.open(shareUrl, '_blank', 'noopener');
+        if (!previewWindow) {
+            console.warn('分享預覽視窗被瀏覽器阻擋。');
+        }
+
+        let copied = false;
+        if (navigator.clipboard?.writeText) {
+            try {
+                await navigator.clipboard.writeText(shareUrl);
+                copied = true;
+                alert('分享連結已複製，並已開啟預覽頁面。');
+            } catch (error) {
+                console.warn('Clipboard write failed', error);
+            }
+        }
+
+        if (!copied) {
+            window.prompt('請複製以下分享連結', shareUrl);
+        }
+    }, [generatedContract]);
     
     const renderFormSection = (sectionId: string) => {
         switch (sectionId) {
@@ -596,6 +1041,10 @@ const App: React.FC = () => {
         }
     };
     
+    if (shareViewPayload) {
+        return <SharedContractView payload={shareViewPayload} onBack={clearShareView} />;
+    }
+
     return (
         <div className="min-h-screen container mx-auto p-4 sm:p-6 lg:p-8">
             <header className="text-center mb-8">
@@ -660,12 +1109,15 @@ const App: React.FC = () => {
                              <div>
                                 {generatedContract ? (
                                     <>
-                                        <div className="flex justify-end gap-2 mb-4">
+                                        <div className="flex flex-wrap justify-end gap-2 mb-4">
                                             <button onClick={() => exportToDoc(generatedContract, 'contract')} className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition">
                                                 <DownloadIcon /> Word
                                             </button>
                                             <button onClick={() => exportToPdf('contract-output', 'contract')} className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition">
                                                 <DownloadIcon /> PDF
+                                            </button>
+                                            <button onClick={handleCreateShareLink} className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 px-4 rounded transition">
+                                                <ShareIcon /> 分享
                                             </button>
                                         </div>
                                         <div id="contract-output">
