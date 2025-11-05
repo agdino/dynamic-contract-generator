@@ -54,8 +54,7 @@ const ContractRenderer: React.FC<{ content: string }> = ({ content }) => {
         if (trimmedLine === '乙方') {
             return (
                 <div key={index} className="mt-6">
-                    <h3 className="text-lg font-bold mb-3">{trimmedLine}</h3>
-                    <div data-signature-target className="relative h-24 mb-4 max-w-sm"></div>
+                    <h3 className="text-lg font-bold mb-2">{trimmedLine}</h3>
                 </div>
             );
         }
@@ -67,6 +66,32 @@ const ContractRenderer: React.FC<{ content: string }> = ({ content }) => {
             return <h3 key={index} className="text-lg font-bold mt-6 mb-3">{trimmedLine}</h3>;
         }
         if (trimmedLine.startsWith('姓名：')) {
+            const nameMatch = line.match(/^(姓名：)([_＿]+)(（.*)$/);
+            if (nameMatch) {
+                const [, prefix, signaturePlaceholder, suffix] = nameMatch;
+                return (
+                    <div
+                        key={index}
+                        className="mb-3 flex flex-wrap items-center gap-3 text-justify"
+                        data-signature-name-line
+                    >
+                        <span>{prefix}</span>
+                        <span className="relative inline-flex min-w-[220px] max-w-[320px] flex-shrink-0 items-center justify-center rounded border-2 border-red-500 px-8 py-4">
+                            <span
+                                aria-hidden="true"
+                                className="font-mono text-lg tracking-[0.3em] text-red-500/40 select-none"
+                            >
+                                {signaturePlaceholder}
+                            </span>
+                            <span
+                                data-signature-target
+                                className="pointer-events-none absolute inset-2 rounded-sm"
+                            />
+                        </span>
+                        <span>{suffix}</span>
+                    </div>
+                );
+            }
             return (
                 <p
                     key={index}
@@ -103,8 +128,7 @@ const generateStyledHtmlForExport = (content: string): string => {
         if (trimmedLine === '乙方') {
             return `
                 <div style="margin-top: 24px;">
-                    <h3 style="font-size: 1.17em; font-weight: bold; margin-bottom: 12px;">${trimmedLine}</h3>
-                    <div data-signature-target style="position: relative; height: 110px; margin-bottom: 16px; max-width: 320px;"></div>
+                    <h3 style="font-size: 1.17em; font-weight: bold; margin-bottom: 8px;">${trimmedLine}</h3>
                 </div>
             `;
         }
@@ -116,6 +140,20 @@ const generateStyledHtmlForExport = (content: string): string => {
             return `<h3 style="font-size: 1.17em; font-weight: bold; margin-top: 24px; margin-bottom: 12px;">${trimmedLine}</h3>`;
         }
         if (trimmedLine.startsWith('姓名：')) {
+            const nameMatch = line.match(/^(姓名：)([_＿]+)(（.*)$/);
+            if (nameMatch) {
+                const [, prefix, signaturePlaceholder, suffix] = nameMatch;
+                return `
+                    <div data-signature-name-line style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px;">
+                        <span>${prefix}</span>
+                        <span style="position: relative; display: inline-flex; min-width: 220px; max-width: 320px; align-items: center; justify-content: center; padding: 16px 32px; border: 2px solid #ef4444; border-radius: 4px;">
+                            <span aria-hidden="true" style="font-family: 'Courier New', monospace; font-size: 1.1em; letter-spacing: 0.3em; color: rgba(239, 68, 68, 0.4); user-select: none;">${signaturePlaceholder}</span>
+                            <span data-signature-target style="position: absolute; top: 8px; right: 8px; bottom: 8px; left: 8px; border-radius: 4px;"></span>
+                        </span>
+                        <span>${suffix}</span>
+                    </div>
+                `;
+            }
             return `<p data-signature-name-line style="${basePStyle}">${line}</p>`;
         }
         if (/^\d+(\.\d+)*\s/.test(trimmedLine)) {
@@ -138,6 +176,9 @@ interface SharePayload {
     createdAt: number;
 }
 
+const SIGNATURE_SCALE_MIN = 0.1;
+const SIGNATURE_SCALE_MAX = 2;
+
 const encodeSharePayload = (payload: SharePayload): string => {
     const encoder = new TextEncoder();
     const data = encoder.encode(JSON.stringify(payload));
@@ -156,7 +197,7 @@ const decodeSharePayload = (encoded: string): SharePayload => {
     return JSON.parse(decoder.decode(bytes)) as SharePayload;
 };
 
-const generatePdfBlobFromElement = async (element: HTMLElement): Promise<Blob | null> => {
+const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob | null> => {
     const jspdfLib = (window as any).jspdf;
     const html2canvas = (window as any).html2canvas;
 
@@ -165,37 +206,122 @@ const generatePdfBlobFromElement = async (element: HTMLElement): Promise<Blob | 
         return null;
     }
 
-    const { jsPDF } = jspdfLib;
-    const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+    const loadingIndicator = document.createElement('div');
+    loadingIndicator.innerText = '正在生成高品質 PDF... 請稍候';
+    loadingIndicator.style.position = 'fixed';
+    loadingIndicator.style.top = '50%';
+    loadingIndicator.style.left = '50%';
+    loadingIndicator.style.transform = 'translate(-50%, -50%)';
+    loadingIndicator.style.backgroundColor = 'rgba(0,0,0,0.8)';
+    loadingIndicator.style.color = 'white';
+    loadingIndicator.style.padding = '20px';
+    loadingIndicator.style.borderRadius = '10px';
+    loadingIndicator.style.zIndex = '10000';
+    document.body.appendChild(loadingIndicator);
 
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = pdf.internal.pageSize.getHeight();
-    const margin = 10;
-    const usableWidth = pdfWidth - margin * 2;
-    const usableHeight = pdfHeight - margin * 2;
+    const pageRenderer = document.createElement('div');
 
-    const canvas = await html2canvas(element, {
-        scale: 2,
-        backgroundColor: '#ffffff',
-        useCORS: true
-    });
+    try {
+        document.body.appendChild(pageRenderer);
+        const { jsPDF } = jspdfLib;
+        const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
 
-    const imgData = canvas.toDataURL('image/png');
-    const imgHeight = (canvas.height * usableWidth) / canvas.width;
-    let heightLeft = imgHeight;
-    let position = margin;
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = pdf.internal.pageSize.getHeight();
+        const margin = 15;
+        const contentWidthMm = pdfWidth - margin * 2;
+        const contentHeightMm = pdfHeight - margin * 2;
 
-    pdf.addImage(imgData, 'PNG', margin, position, usableWidth, imgHeight);
-    heightLeft -= usableHeight;
+        const mmToPxRatio = (() => {
+            const d = document.createElement('div');
+            d.style.position = 'absolute';
+            d.style.top = '-9999px';
+            d.style.width = '100mm';
+            document.body.appendChild(d);
+            const px = d.offsetWidth;
+            document.body.removeChild(d);
+            return px / 100;
+        })();
 
-    while (heightLeft > 0) {
-        position = position - usableHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'PNG', margin, position, usableWidth, imgHeight);
-        heightLeft -= usableHeight;
+        const contentHeightPx = contentHeightMm * mmToPxRatio;
+
+        const sourceChildren = Array.from(sourceElement.children).filter(
+            (node): node is HTMLElement => node instanceof HTMLElement
+        );
+
+        if (!sourceChildren.length) {
+            throw new Error('Contract content container not found.');
+        }
+
+        pageRenderer.style.position = 'absolute';
+        pageRenderer.style.left = '-9999px';
+        pageRenderer.style.top = '0';
+        pageRenderer.style.width = `${contentWidthMm}mm`;
+        pageRenderer.style.boxSizing = 'border-box';
+
+        const referenceNode = sourceChildren[0];
+        const computedStyle = window.getComputedStyle(referenceNode);
+        const styleKeys = ['fontFamily', 'fontSize', 'lineHeight', 'color', 'backgroundColor', 'padding'] as const;
+        styleKeys.forEach(prop => {
+            const value = (computedStyle as any)[prop];
+            if (value) {
+                (pageRenderer.style as any)[prop] = value;
+            }
+        });
+        pageRenderer.style.backgroundColor = computedStyle.backgroundColor || '#ffffff';
+
+        const renderPage = async (container: HTMLElement) => {
+            const canvas = await html2canvas(container, {
+                scale: 2,
+                useCORS: true,
+                height: container.scrollHeight,
+                width: container.scrollWidth
+            });
+            const imgData = canvas.toDataURL('image/png');
+            const imgProps = pdf.getImageProperties(imgData);
+            const imgHeight = (imgProps.height * contentWidthMm) / imgProps.width;
+            pdf.addImage(imgData, 'PNG', margin, margin, contentWidthMm, imgHeight);
+        };
+
+        const allChildren = sourceChildren;
+        let pageCount = 0;
+
+        for (const child of allChildren) {
+            const clonedChild = child.cloneNode(true) as HTMLElement;
+            pageRenderer.appendChild(clonedChild);
+
+            if (pageRenderer.offsetHeight > contentHeightPx) {
+                pageRenderer.removeChild(clonedChild);
+
+                if (pageRenderer.children.length > 0) {
+                    if (pageCount > 0) pdf.addPage();
+                    await renderPage(pageRenderer);
+                    pageCount++;
+                    pageRenderer.innerHTML = '';
+                }
+
+                pageRenderer.appendChild(clonedChild);
+            }
+        }
+
+        if (pageRenderer.children.length > 0) {
+            if (pageCount > 0) pdf.addPage();
+            await renderPage(pageRenderer);
+        }
+
+        return pdf.output('blob');
+    } catch (error) {
+        console.error('An error occurred during PDF generation:', error);
+        alert('生成 PDF 時發生錯誤，請檢查主控台以獲取更多資訊。');
+        return null;
+    } finally {
+        if (pageRenderer.parentNode === document.body) {
+            document.body.removeChild(pageRenderer);
+        }
+        if (loadingIndicator.parentNode === document.body) {
+            document.body.removeChild(loadingIndicator);
+        }
     }
-
-    return pdf.output('blob');
 };
 
 const SignatureModal: React.FC<{ onClose: () => void; onConfirm: (dataUrl: string) => void; }> = ({ onClose, onConfirm }) => {
@@ -350,7 +476,10 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
         const containerWidth = contractEl.clientWidth || anchorRect.width;
         const baseWidth = anchorRect.width || containerWidth * 0.6;
         const desiredWidth = Math.min(Math.max(baseWidth * 0.9, 220), containerWidth * 0.85);
-        const scale = Math.min(Math.max(desiredWidth / naturalWidth, 0.3), 3);
+        const scale = Math.min(
+            Math.max(desiredWidth / naturalWidth, SIGNATURE_SCALE_MIN),
+            SIGNATURE_SCALE_MAX
+        );
         const scaledWidth = naturalWidth * scale;
         const scaledHeight = naturalHeight * scale;
 
@@ -429,7 +558,7 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
             return;
         }
 
-        const blob = await generatePdfBlobFromElement(contractRef.current);
+        const blob = await createPaginatedPdfBlob(contractRef.current);
         if (!blob) return;
 
         const file = new File([blob], `signed-contract-${payload.id}.pdf`, { type: 'application/pdf' });
@@ -458,7 +587,7 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
 
     const handleDownloadSignedPdf = async () => {
         if (!contractRef.current) return;
-        const blob = await generatePdfBlobFromElement(contractRef.current);
+        const blob = await createPaginatedPdfBlob(contractRef.current);
         if (!blob) return;
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -501,9 +630,9 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
                             <label className="text-sm text-gray-300">簽名大小</label>
                             <input
                                 type="range"
-                                min={0.3}
-                                max={3}
-                                step={0.05}
+                                min={SIGNATURE_SCALE_MIN}
+                                max={SIGNATURE_SCALE_MAX}
+                                step={0.02}
                                 value={signaturePlacement.scale}
                                 onChange={(e) => {
                                     setHasManualSignatureAdjustment(true);
@@ -941,116 +1070,25 @@ const App: React.FC = () => {
 
     const exportToPdf = async (elementId: string, filename: string) => {
         const sourceElement = document.getElementById(elementId);
-        if (!sourceElement || !(window as any).jspdf || !(window as any).html2canvas) {
-            console.error("PDF export failed: element not found or libraries not loaded.");
-            alert("PDF 匯出失敗，請稍後再試。");
+        if (!sourceElement) {
+            console.error('PDF export failed: element not found.');
+            alert('PDF 匯出失敗，請稍後再試。');
             return;
         }
 
-        const loadingIndicator = document.createElement('div');
-        loadingIndicator.innerText = '正在生成高品質 PDF... 請稍候';
-        loadingIndicator.style.position = 'fixed';
-        loadingIndicator.style.top = '50%';
-        loadingIndicator.style.left = '50%';
-        loadingIndicator.style.transform = 'translate(-50%, -50%)';
-        loadingIndicator.style.backgroundColor = 'rgba(0,0,0,0.8)';
-        loadingIndicator.style.color = 'white';
-        loadingIndicator.style.padding = '20px';
-        loadingIndicator.style.borderRadius = '10px';
-        loadingIndicator.style.zIndex = '10000';
-        document.body.appendChild(loadingIndicator);
-
-        const pageRenderer = document.createElement('div');
-
-        try {
-            document.body.appendChild(pageRenderer);
-            const { jsPDF } = (window as any).jspdf;
-            const html2canvas = (window as any).html2canvas;
-            const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
-
-            const pdfWidth = pdf.internal.pageSize.getWidth();
-            const pdfHeight = pdf.internal.pageSize.getHeight();
-            const margin = 15;
-            const contentWidthMm = pdfWidth - margin * 2;
-            const contentHeightMm = pdfHeight - margin * 2;
-
-            const mmToPxRatio = (() => {
-                const d = document.createElement("div");
-                d.style.position = "absolute";
-                d.style.top = "-9999px";
-                d.style.width = "100mm";
-                document.body.appendChild(d);
-                const px = d.offsetWidth;
-                document.body.removeChild(d);
-                return px / 100;
-            })();
-            
-            const contentHeightPx = contentHeightMm * mmToPxRatio;
-
-            const sourceContainer = sourceElement.querySelector('div');
-            if (!sourceContainer) {
-                throw new Error("Contract content container not found.");
-            }
-
-            pageRenderer.style.position = 'absolute';
-            pageRenderer.style.left = '-9999px';
-            pageRenderer.style.top = '0';
-            pageRenderer.style.width = `${contentWidthMm}mm`;
-            pageRenderer.style.boxSizing = 'border-box';
-
-            const computedStyle = window.getComputedStyle(sourceContainer);
-            ['fontFamily', 'fontSize', 'lineHeight', 'color', 'backgroundColor', 'padding'].forEach(prop => {
-                (pageRenderer.style as any)[prop] = (computedStyle as any)[prop];
-            });
-
-            const renderPage = async (container: HTMLElement) => {
-                const canvas = await html2canvas(container, {
-                    scale: 2,
-                    useCORS: true,
-                    height: container.scrollHeight, 
-                    width: container.scrollWidth
-                });
-                const imgData = canvas.toDataURL('image/png');
-                const imgProps = pdf.getImageProperties(imgData);
-                const imgHeight = (imgProps.height * contentWidthMm) / imgProps.width;
-                pdf.addImage(imgData, 'PNG', margin, margin, contentWidthMm, imgHeight);
-            };
-
-            const allChildren = Array.from(sourceContainer.children);
-            let pageCount = 0;
-
-            for (const child of allChildren) {
-                const clonedChild = child.cloneNode(true) as HTMLElement;
-                pageRenderer.appendChild(clonedChild);
-                
-                if (pageRenderer.offsetHeight > contentHeightPx) {
-                    pageRenderer.removeChild(clonedChild);
-                    
-                    if (pageCount > 0) pdf.addPage();
-                    await renderPage(pageRenderer);
-                    pageCount++;
-                    
-                    pageRenderer.innerHTML = '';
-                    pageRenderer.appendChild(clonedChild);
-                }
-            }
-            
-            if (pageRenderer.children.length > 0) {
-                if (pageCount > 0) pdf.addPage();
-                await renderPage(pageRenderer);
-            }
-
-            pdf.save(`${filename}.pdf`);
-
-        } catch (error) {
-            console.error("An error occurred during PDF generation:", error);
-            alert("生成 PDF 時發生錯誤，請檢查主控台以獲取更多資訊。");
-        } finally {
-            if (pageRenderer.parentNode === document.body) {
-                document.body.removeChild(pageRenderer);
-            }
-            document.body.removeChild(loadingIndicator);
+        const blob = await createPaginatedPdfBlob(sourceElement);
+        if (!blob) {
+            return;
         }
+
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `${filename}.pdf`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     };
 
     const handleCreateShareLink = useCallback(async () => {
