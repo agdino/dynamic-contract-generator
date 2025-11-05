@@ -51,11 +51,31 @@ const ContractRenderer: React.FC<{ content: string }> = ({ content }) => {
     const renderLine = (line: string, index: number) => {
         const trimmedLine = line.trim();
 
+        if (trimmedLine === '乙方') {
+            return (
+                <div key={index} className="mt-6">
+                    <h3 className="text-lg font-bold mb-3">{trimmedLine}</h3>
+                    <div data-signature-target className="relative h-24 mb-4 max-w-sm"></div>
+                </div>
+            );
+        }
+
         if (trimmedLine.endsWith('專案合作備忘錄')) {
             return <h2 key={index} className="text-2xl font-bold text-center mb-8">{trimmedLine}</h2>;
         }
-        if (/^[一二三四五六七八九十]+、/.test(trimmedLine) || ['甲方', '乙方'].includes(trimmedLine)) {
+        if (/^[一二三四五六七八九十]+、/.test(trimmedLine) || trimmedLine === '甲方') {
             return <h3 key={index} className="text-lg font-bold mt-6 mb-3">{trimmedLine}</h3>;
+        }
+        if (trimmedLine.startsWith('姓名：')) {
+            return (
+                <p
+                    key={index}
+                    className="mb-2 text-justify"
+                    data-signature-name-line
+                >
+                    {line}
+                </p>
+            );
         }
         if (/^\d+(\.\d+)*\s/.test(trimmedLine)) {
             return <p key={index} className="mb-2 pl-6" style={{ textIndent: '-1.5rem' }}>{line}</p>;
@@ -80,11 +100,23 @@ const generateStyledHtmlForExport = (content: string): string => {
         const trimmedLine = line.trim();
         const basePStyle = `margin-bottom: 8px; text-align: justify; line-height: 1.6;`;
 
+        if (trimmedLine === '乙方') {
+            return `
+                <div style="margin-top: 24px;">
+                    <h3 style="font-size: 1.17em; font-weight: bold; margin-bottom: 12px;">${trimmedLine}</h3>
+                    <div data-signature-target style="position: relative; height: 110px; margin-bottom: 16px; max-width: 320px;"></div>
+                </div>
+            `;
+        }
+
         if (trimmedLine.endsWith('專案合作備忘錄')) {
             return `<h2 style="font-size: 1.5em; font-weight: bold; text-align: center; margin-bottom: 32px;">${trimmedLine}</h2>`;
         }
-        if (/^[一二三四五六七八九十]+、/.test(trimmedLine) || ['甲方', '乙方'].includes(trimmedLine)) {
+        if (/^[一二三四五六七八九十]+、/.test(trimmedLine) || trimmedLine === '甲方') {
             return `<h3 style="font-size: 1.17em; font-weight: bold; margin-top: 24px; margin-bottom: 12px;">${trimmedLine}</h3>`;
+        }
+        if (trimmedLine.startsWith('姓名：')) {
+            return `<p data-signature-name-line style="${basePStyle}">${line}</p>`;
         }
         if (/^\d+(\.\d+)*\s/.test(trimmedLine)) {
             return `<p style="${basePStyle} padding-left: 1.5em; text-indent: -1.5em;">${line}</p>`;
@@ -269,19 +301,97 @@ const SignatureModal: React.FC<{ onClose: () => void; onConfirm: (dataUrl: strin
     );
 };
 
-const SharedContractView: React.FC<{ payload: SharePayload; onBack: () => void; }> = ({ payload, onBack }) => {
+const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) => {
     const [isSignatureModalOpen, setIsSignatureModalOpen] = useState(false);
     const [signatureDataUrl, setSignatureDataUrl] = useState<string | null>(null);
     const [signaturePlacement, setSignaturePlacement] = useState({ x: 40, y: 40, scale: 1 });
     const [isDraggingSignature, setIsDraggingSignature] = useState(false);
+    const [hasManualSignatureAdjustment, setHasManualSignatureAdjustment] = useState(false);
+    const [isShareLinkExpanded, setIsShareLinkExpanded] = useState(false);
     const contractRef = useRef<HTMLDivElement>(null);
+    const signatureImageRef = useRef<HTMLImageElement>(null);
     const dragOffset = useRef({ x: 0, y: 0 });
 
     const shareLink = useMemo(() => window.location.href, []);
 
+    const alignSignatureToTarget = useCallback(() => {
+        if (!signatureDataUrl || hasManualSignatureAdjustment) {
+            return;
+        }
+        if (!contractRef.current || !signatureImageRef.current) {
+            return;
+        }
+
+        const signatureEl = signatureImageRef.current;
+        if (!signatureEl.complete || !signatureEl.naturalWidth || !signatureEl.naturalHeight) {
+            return;
+        }
+
+        const contractEl = contractRef.current;
+        const targetNodes = contractEl.querySelectorAll('[data-signature-target]');
+        const fallbackNodes = contractEl.querySelectorAll('[data-signature-name-line]');
+        const target = targetNodes.length ? (targetNodes[targetNodes.length - 1] as HTMLElement) : null;
+        const fallback = !target && fallbackNodes.length ? (fallbackNodes[fallbackNodes.length - 1] as HTMLElement) : null;
+        const anchor = target ?? fallback;
+
+        if (!anchor) {
+            return;
+        }
+
+        const containerRect = contractEl.getBoundingClientRect();
+        const anchorRect = anchor.getBoundingClientRect();
+        const naturalWidth = signatureEl.naturalWidth;
+        const naturalHeight = signatureEl.naturalHeight;
+
+        if (!naturalWidth || !naturalHeight) {
+            return;
+        }
+
+        const containerWidth = contractEl.clientWidth || anchorRect.width;
+        const baseWidth = anchorRect.width || containerWidth * 0.6;
+        const desiredWidth = Math.min(Math.max(baseWidth * 0.9, 220), containerWidth * 0.85);
+        const scale = Math.min(Math.max(desiredWidth / naturalWidth, 0.3), 3);
+        const scaledWidth = naturalWidth * scale;
+        const scaledHeight = naturalHeight * scale;
+
+        let x = anchorRect.left - containerRect.left;
+        let y = anchorRect.top - containerRect.top;
+
+        if (target) {
+            x += (anchorRect.width - scaledWidth) / 2;
+            y += (anchorRect.height - scaledHeight) / 2;
+        } else {
+            y -= scaledHeight + 12;
+        }
+
+        x = Math.max(x, 0);
+        y = Math.max(y, 0);
+
+        setSignaturePlacement({ x, y, scale });
+    }, [hasManualSignatureAdjustment, signatureDataUrl]);
+
+    useEffect(() => {
+        if (!signatureDataUrl) {
+            return;
+        }
+        const id = window.setTimeout(() => {
+            alignSignatureToTarget();
+        }, 0);
+        return () => window.clearTimeout(id);
+    }, [signatureDataUrl, alignSignatureToTarget]);
+
+    useEffect(() => {
+        if (!signatureDataUrl || hasManualSignatureAdjustment) {
+            return;
+        }
+        window.addEventListener('resize', alignSignatureToTarget);
+        return () => window.removeEventListener('resize', alignSignatureToTarget);
+    }, [signatureDataUrl, hasManualSignatureAdjustment, alignSignatureToTarget]);
+
     const handleSignatureConfirm = (dataUrl: string) => {
         setSignatureDataUrl(dataUrl);
         setSignaturePlacement({ x: 40, y: 40, scale: 1 });
+        setHasManualSignatureAdjustment(false);
         setIsSignatureModalOpen(false);
     };
 
@@ -293,6 +403,7 @@ const SharedContractView: React.FC<{ payload: SharePayload; onBack: () => void; 
             y: event.clientY - imageRect.top
         };
         setIsDraggingSignature(true);
+        setHasManualSignatureAdjustment(true);
         event.currentTarget.setPointerCapture(event.pointerId);
         event.preventDefault();
     };
@@ -375,50 +486,54 @@ const SharedContractView: React.FC<{ payload: SharePayload; onBack: () => void; 
     return (
         <div className="min-h-screen bg-gray-900 text-gray-100 p-4 sm:p-6 lg:p-8">
             <div className="max-w-4xl mx-auto space-y-6">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
                     <div>
                         <h1 className="text-3xl font-bold text-blue-300">合約簽署頁面</h1>
                         <p className="text-sm text-gray-400 mt-1">分享時間：{new Date(payload.createdAt).toLocaleString()}</p>
                     </div>
-                    <button onClick={onBack} className="px-4 py-2 rounded-md border border-gray-600 text-gray-300 hover:bg-gray-800 transition">返回合約生成器</button>
                 </div>
 
-                <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-3">
-                    <h2 className="text-lg font-semibold text-gray-100">分享連結</h2>
-                    <p className="text-sm break-all text-gray-300">{shareLink}</p>
-                    <button onClick={copyShareLink} className="text-sm text-blue-300 hover:text-blue-200 transition">複製分享連結</button>
-                </div>
-
-                <div className="space-y-4">
-                    <button
-                        onClick={() => setIsSignatureModalOpen(true)}
-                        className="w-full sm:w-auto px-6 py-3 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-md transition"
-                    >
-                        確認並簽名
-                    </button>
-                    {signatureDataUrl && (
-                        <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-3">
-                            <h3 className="text-base font-semibold text-gray-100">簽名調整</h3>
-                            <p className="text-sm text-gray-300">拖曳簽名即可移動位置，使用下方滑桿調整大小。</p>
-                            <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-                                <label className="text-sm text-gray-300">簽名大小</label>
-                                <input
-                                    type="range"
-                                    min={0.5}
-                                    max={2.5}
-                                    step={0.1}
-                                    value={signaturePlacement.scale}
-                                    onChange={(e) => setSignaturePlacement(prev => ({ ...prev, scale: parseFloat(e.target.value) }))}
-                                    className="flex-1"
-                                />
-                                <div className="flex gap-2">
-                                    <button onClick={() => setIsSignatureModalOpen(true)} className="px-3 py-1 text-sm rounded border border-gray-600 text-gray-300 hover:bg-gray-700 transition">重新簽名</button>
-                                    <button onClick={() => setSignatureDataUrl(null)} className="px-3 py-1 text-sm rounded border border-red-500 text-red-300 hover:bg-red-500/20 transition">移除簽名</button>
-                                </div>
+                {signatureDataUrl && (
+                    <div className="bg-gray-800/60 border border-gray-700 rounded-lg p-4 space-y-3">
+                        <h3 className="text-base font-semibold text-gray-100">簽名調整</h3>
+                        <p className="text-sm text-gray-300">拖曳簽名即可移動位置，使用下方滑桿調整大小。</p>
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                            <label className="text-sm text-gray-300">簽名大小</label>
+                            <input
+                                type="range"
+                                min={0.3}
+                                max={3}
+                                step={0.05}
+                                value={signaturePlacement.scale}
+                                onChange={(e) => {
+                                    setHasManualSignatureAdjustment(true);
+                                    setSignaturePlacement(prev => ({ ...prev, scale: parseFloat(e.target.value) }));
+                                }}
+                                className="flex-1"
+                            />
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => {
+                                        setHasManualSignatureAdjustment(false);
+                                        setIsSignatureModalOpen(true);
+                                    }}
+                                    className="px-3 py-1 text-sm rounded border border-gray-600 text-gray-300 hover:bg-gray-700 transition"
+                                >
+                                    重新簽名
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setSignatureDataUrl(null);
+                                        setHasManualSignatureAdjustment(false);
+                                    }}
+                                    className="px-3 py-1 text-sm rounded border border-red-500 text-red-300 hover:bg-red-500/20 transition"
+                                >
+                                    移除簽名
+                                </button>
                             </div>
                         </div>
-                    )}
-                </div>
+                    </div>
+                )}
 
                 <div ref={contractRef} className="relative">
                     <ContractRenderer content={payload.content} />
@@ -426,6 +541,7 @@ const SharedContractView: React.FC<{ payload: SharePayload; onBack: () => void; 
                         <img
                             src={signatureDataUrl}
                             alt="簽名"
+                            ref={signatureImageRef}
                             className="absolute top-0 left-0 cursor-move select-none"
                             style={{
                                 transform: `translate(${signaturePlacement.x}px, ${signaturePlacement.y}px) scale(${signaturePlacement.scale})`,
@@ -435,17 +551,46 @@ const SharedContractView: React.FC<{ payload: SharePayload; onBack: () => void; 
                             onPointerMove={handlePointerMove}
                             onPointerUp={handlePointerUp}
                             onPointerLeave={handlePointerUp}
+                            onLoad={alignSignatureToTarget}
                         />
                     )}
                 </div>
 
-                <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                <div className="flex flex-col sm:flex-row gap-3 sm:items-center flex-wrap">
+                    <button
+                        onClick={() => {
+                            setIsSignatureModalOpen(true);
+                            if (!signatureDataUrl) {
+                                setHasManualSignatureAdjustment(false);
+                            }
+                        }}
+                        className="flex items-center justify-center gap-2 px-5 py-3 rounded-md bg-blue-600 hover:bg-blue-500 text-white font-semibold transition"
+                    >
+                        確認並簽名
+                    </button>
                     <button onClick={handleDownloadSignedPdf} className="flex items-center justify-center gap-2 px-5 py-3 rounded-md bg-green-600 hover:bg-green-500 text-white font-semibold transition">
                         <DownloadIcon /> 下載簽署 PDF
                     </button>
                     <button onClick={handleShareToLine} className="flex items-center justify-center gap-2 px-5 py-3 rounded-md bg-green-500/20 border border-green-400 text-green-200 hover:bg-green-500/30 transition">
                         <ShareIcon /> 分享至 LINE
                     </button>
+                </div>
+
+                <div className="pt-2">
+                    <button
+                        onClick={() => setIsShareLinkExpanded(prev => !prev)}
+                        className="w-full flex items-center justify-between rounded-lg border border-gray-700 bg-gray-800/40 px-4 py-3 text-left text-sm font-medium text-gray-200 hover:bg-gray-800/60 transition"
+                        aria-expanded={isShareLinkExpanded}
+                    >
+                        <span>分享連結</span>
+                        <span className="text-lg leading-none text-gray-400">{isShareLinkExpanded ? '−' : '+'}</span>
+                    </button>
+                    {isShareLinkExpanded && (
+                        <div className="mt-3 space-y-3 rounded-lg border border-gray-700 bg-gray-800/60 p-4">
+                            <p className="text-sm break-all text-gray-300">{shareLink}</p>
+                            <button onClick={copyShareLink} className="text-sm text-blue-300 hover:text-blue-200 transition">複製分享連結</button>
+                        </div>
+                    )}
                 </div>
             </div>
 
@@ -552,15 +697,6 @@ const App: React.FC = () => {
         return () => window.removeEventListener('popstate', handlePopState);
     }, []);
     
-    const clearShareView = useCallback(() => {
-        const params = new URLSearchParams(window.location.search);
-        params.delete('share');
-        const newSearch = params.toString();
-        const newUrl = newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname;
-        window.history.replaceState(null, '', newUrl);
-        setShareViewPayload(null);
-    }, [setShareViewPayload]);
-
     const saveNewTemplate = () => {
         if (!templateName.trim()) {
             alert('範本名稱不能為空');
@@ -1043,7 +1179,7 @@ const App: React.FC = () => {
     };
     
     if (shareViewPayload) {
-        return <SharedContractView payload={shareViewPayload} onBack={clearShareView} />;
+        return <SharedContractView payload={shareViewPayload} />;
     }
 
     return (
