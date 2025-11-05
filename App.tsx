@@ -45,7 +45,13 @@ const FormInput: React.FC<{label: string; name: string; value: string; onChange:
     </div>
 );
 
-const ContractRenderer: React.FC<{ content: string }> = ({ content }) => {
+interface ContractRendererProps {
+    content: string;
+    onSignatureSlotClick?: () => void;
+    signatureSlotInteractive?: boolean;
+}
+
+const ContractRenderer: React.FC<ContractRendererProps> = ({ content, onSignatureSlotClick, signatureSlotInteractive = false }) => {
     if (!content) return null;
 
     const renderLine = (line: string, index: number) => {
@@ -69,6 +75,11 @@ const ContractRenderer: React.FC<{ content: string }> = ({ content }) => {
             const nameMatch = line.match(/^(姓名：)([_＿]+)(（.*)$/);
             if (nameMatch) {
                 const [, prefix, signaturePlaceholder, suffix] = nameMatch;
+                const interactive = signatureSlotInteractive && typeof onSignatureSlotClick === 'function';
+                const slotClasses = [
+                    'relative inline-flex min-w-[220px] max-w-[320px] flex-shrink-0 items-center justify-center rounded border-2 border-red-500 px-8 py-4',
+                    interactive ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/60 focus:ring-offset-2 focus:ring-offset-white' : ''
+                ].filter(Boolean).join(' ');
                 return (
                     <div
                         key={index}
@@ -76,7 +87,18 @@ const ContractRenderer: React.FC<{ content: string }> = ({ content }) => {
                         data-signature-name-line
                     >
                         <span>{prefix}</span>
-                        <span className="relative inline-flex min-w-[220px] max-w-[320px] flex-shrink-0 items-center justify-center rounded border-2 border-red-500 px-8 py-4">
+                        <span
+                            className={slotClasses}
+                            role={interactive ? 'button' : undefined}
+                            tabIndex={interactive ? 0 : undefined}
+                            onClick={interactive ? onSignatureSlotClick : undefined}
+                            onKeyDown={interactive ? (event) => {
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    onSignatureSlotClick?.();
+                                }
+                            } : undefined}
+                        >
                             <span
                                 aria-hidden="true"
                                 className="font-mono text-lg tracking-[0.3em] text-red-500/40 select-none"
@@ -85,7 +107,7 @@ const ContractRenderer: React.FC<{ content: string }> = ({ content }) => {
                             </span>
                             <span
                                 data-signature-target
-                                className="pointer-events-none absolute inset-2 rounded-sm"
+                                className="absolute inset-2 rounded-sm"
                             />
                         </span>
                         <span>{suffix}</span>
@@ -270,7 +292,7 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
         });
         pageRenderer.style.backgroundColor = computedStyle.backgroundColor || '#ffffff';
 
-        const renderPage = async (container: HTMLElement) => {
+        const renderPage = async (container: HTMLElement, isFirstPage: boolean) => {
             const canvas = await html2canvas(container, {
                 scale: 2,
                 useCORS: true,
@@ -280,11 +302,14 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
             const imgData = canvas.toDataURL('image/png');
             const imgProps = pdf.getImageProperties(imgData);
             const imgHeight = (imgProps.height * contentWidthMm) / imgProps.width;
+            if (!isFirstPage) {
+                pdf.addPage();
+            }
             pdf.addImage(imgData, 'PNG', margin, margin, contentWidthMm, imgHeight);
         };
 
         const allChildren = sourceChildren;
-        let pageCount = 0;
+        let isFirstPage = true;
 
         for (const child of allChildren) {
             const clonedChild = child.cloneNode(true) as HTMLElement;
@@ -294,9 +319,8 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
                 pageRenderer.removeChild(clonedChild);
 
                 if (pageRenderer.children.length > 0) {
-                    if (pageCount > 0) pdf.addPage();
-                    await renderPage(pageRenderer);
-                    pageCount++;
+                    await renderPage(pageRenderer, isFirstPage);
+                    isFirstPage = false;
                     pageRenderer.innerHTML = '';
                 }
 
@@ -305,8 +329,7 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
         }
 
         if (pageRenderer.children.length > 0) {
-            if (pageCount > 0) pdf.addPage();
-            await renderPage(pageRenderer);
+            await renderPage(pageRenderer, isFirstPage);
         }
 
         return pdf.output('blob');
@@ -543,6 +566,7 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
         const newX = event.clientX - contractRect.left - dragOffset.current.x;
         const newY = event.clientY - contractRect.top - dragOffset.current.y;
         setSignaturePlacement(prev => ({ ...prev, x: newX, y: newY }));
+        event.preventDefault();
     };
 
     const handlePointerUp = (event: React.PointerEvent<HTMLImageElement>) => {
@@ -612,6 +636,13 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
         window.prompt('請複製分享連結', shareLink);
     };
 
+    const handleOpenSignatureModal = useCallback(() => {
+        setIsSignatureModalOpen(true);
+        if (!signatureDataUrl) {
+            setHasManualSignatureAdjustment(false);
+        }
+    }, [signatureDataUrl]);
+
     return (
         <div className="min-h-screen bg-gray-900 text-gray-100 p-4 sm:p-6 lg:p-8">
             <div className="max-w-4xl mx-auto space-y-6">
@@ -620,6 +651,47 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
                         <h1 className="text-3xl font-bold text-blue-300">合約簽署頁面</h1>
                         <p className="text-sm text-gray-400 mt-1">分享時間：{new Date(payload.createdAt).toLocaleString()}</p>
                     </div>
+                </div>
+
+                <div ref={contractRef} className="relative">
+                    <ContractRenderer
+                        content={payload.content}
+                        onSignatureSlotClick={handleOpenSignatureModal}
+                        signatureSlotInteractive
+                    />
+                    {signatureDataUrl && (
+                        <img
+                            src={signatureDataUrl}
+                            alt="簽名"
+                            ref={signatureImageRef}
+                            className="absolute top-0 left-0 cursor-move select-none"
+                            style={{
+                                transform: `translate(${signaturePlacement.x}px, ${signaturePlacement.y}px) scale(${signaturePlacement.scale})`,
+                                transformOrigin: 'top left',
+                                touchAction: 'none'
+                            }}
+                            onPointerDown={handlePointerDown}
+                            onPointerMove={handlePointerMove}
+                            onPointerUp={handlePointerUp}
+                            onPointerLeave={handlePointerUp}
+                            onLoad={alignSignatureToTarget}
+                        />
+                    )}
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-3 sm:items-center flex-wrap">
+                    <button
+                        onClick={handleOpenSignatureModal}
+                        className="flex items-center justify-center gap-2 px-5 py-3 rounded-md bg-blue-600 hover:bg-blue-500 text-white font-semibold transition"
+                    >
+                        確認並簽名
+                    </button>
+                    <button onClick={handleDownloadSignedPdf} className="flex items-center justify-center gap-2 px-5 py-3 rounded-md bg-green-600 hover:bg-green-500 text-white font-semibold transition">
+                        <DownloadIcon /> 下載簽署 PDF
+                    </button>
+                    <button onClick={handleShareToLine} className="flex items-center justify-center gap-2 px-5 py-3 rounded-md bg-green-500/20 border border-green-400 text-green-200 hover:bg-green-500/30 transition">
+                        <ShareIcon /> 分享至 LINE
+                    </button>
                 </div>
 
                 {signatureDataUrl && (
@@ -663,47 +735,6 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
                         </div>
                     </div>
                 )}
-
-                <div ref={contractRef} className="relative">
-                    <ContractRenderer content={payload.content} />
-                    {signatureDataUrl && (
-                        <img
-                            src={signatureDataUrl}
-                            alt="簽名"
-                            ref={signatureImageRef}
-                            className="absolute top-0 left-0 cursor-move select-none"
-                            style={{
-                                transform: `translate(${signaturePlacement.x}px, ${signaturePlacement.y}px) scale(${signaturePlacement.scale})`,
-                                transformOrigin: 'top left'
-                            }}
-                            onPointerDown={handlePointerDown}
-                            onPointerMove={handlePointerMove}
-                            onPointerUp={handlePointerUp}
-                            onPointerLeave={handlePointerUp}
-                            onLoad={alignSignatureToTarget}
-                        />
-                    )}
-                </div>
-
-                <div className="flex flex-col sm:flex-row gap-3 sm:items-center flex-wrap">
-                    <button
-                        onClick={() => {
-                            setIsSignatureModalOpen(true);
-                            if (!signatureDataUrl) {
-                                setHasManualSignatureAdjustment(false);
-                            }
-                        }}
-                        className="flex items-center justify-center gap-2 px-5 py-3 rounded-md bg-blue-600 hover:bg-blue-500 text-white font-semibold transition"
-                    >
-                        確認並簽名
-                    </button>
-                    <button onClick={handleDownloadSignedPdf} className="flex items-center justify-center gap-2 px-5 py-3 rounded-md bg-green-600 hover:bg-green-500 text-white font-semibold transition">
-                        <DownloadIcon /> 下載簽署 PDF
-                    </button>
-                    <button onClick={handleShareToLine} className="flex items-center justify-center gap-2 px-5 py-3 rounded-md bg-green-500/20 border border-green-400 text-green-200 hover:bg-green-500/30 transition">
-                        <ShareIcon /> 分享至 LINE
-                    </button>
-                </div>
 
                 <div className="pt-2">
                     <button
