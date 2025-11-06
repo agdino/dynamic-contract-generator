@@ -69,6 +69,11 @@ export const VIDEO_PLACEMENT_TEMPLATE_CONTENT = `電玩酒吧專案合作備忘�
   3. 單筆上限：{{免單單筆上限}}
 {{/section_free_event}}
 
+{{#section_notes}}
+八、備註
+  1. 備註說明：{{備註}}
+{{/section_notes}}
+
 五、保密約定：
 雙方對於本合約內容、合作條件、收費方式等，應視為雙方機密資訊而負保密義務。非經對方事前書面同意，不得將其揭露予第三方或將其公開。
 

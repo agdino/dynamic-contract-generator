@@ -27,6 +27,10 @@ const FIELD_LABELS: { [key: string]: string } = {
 };
 const placeholderList = Object.entries(FIELD_LABELS).map(([key, label]) => ({ key, label }));
 
+const SECTION_REQUIRED_FIELDS: Record<string, string[]> = {
+    notes: ['備註']
+};
+
 const defaultTemplates: Template[] = [
     { id: 'video_placement_default', name: '影片置入', content: VIDEO_PLACEMENT_TEMPLATE_CONTENT },
     { id: 'profit_sharing_default', name: '純分潤', content: PROFIT_SHARING_TEMPLATE_CONTENT }
@@ -970,7 +974,36 @@ const App: React.FC = () => {
         let content = activeTemplate.content;
     
         content = content.replace(/{{#section_(\w+)}}([\s\S]*?){{\/section_\1}}/g, (match, sectionKey, sectionContent) => {
-            return selectedSections[sectionKey] ? sectionContent : '';
+            if (!selectedSections[sectionKey]) {
+                return '';
+            }
+
+            const requiredFields = SECTION_REQUIRED_FIELDS[sectionKey];
+            if (requiredFields?.length) {
+                const hasRequiredContent = requiredFields.some(fieldKey => {
+                    const value = formData[fieldKey as keyof FormData];
+                    if (Array.isArray(value)) {
+                        return value.some(item => {
+                            if (typeof item === 'string') {
+                                return item.trim() !== '';
+                            }
+                            if (typeof item === 'object' && item !== null) {
+                                const maybeName = 'name' in item ? String(item.name ?? '').trim() : '';
+                                const maybePrice = 'price' in item ? String(item.price ?? '').trim() : '';
+                                return maybeName !== '' || maybePrice !== '';
+                            }
+                            return false;
+                        });
+                    }
+                    return typeof value === 'string' && value.trim() !== '';
+                });
+
+                if (!hasRequiredContent) {
+                    return '';
+                }
+            }
+
+            return sectionContent;
         });
     
         const lines = content.split('\n');
