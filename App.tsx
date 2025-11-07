@@ -1,12 +1,13 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Template, FormData, ProductCombo, Section } from './types';
-import { SECTIONS, VIDEO_PLACEMENT_TEMPLATE_CONTENT, PROFIT_SHARING_TEMPLATE_CONTENT } from './constants';
+import { SECTIONS, VIDEO_PLACEMENT_TEMPLATE_CONTENT, PROFIT_SHARING_TEMPLATE_CONTENT, PURE_MATERIAL_TEMPLATE_CONTENT } from './constants';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { TrashIcon, DownloadIcon } from './components/icons';
+import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from './utils/compression';
 
 const initialFormData: FormData = {
-  '立約人': '', '平台': 'YouTube', '頻道': '', '推廣產品': '', '提供產品': '', '遊戲主題': '',
+  '立約人': '', '平台': 'YouTube', '頻道': '', '推廣產品': '', '提供產品': '', '影片限制': '', '遊戲主題': '',
   '合約期間_起': '', '合約期間_迄': '', '合約費用合計': '0', '合約製作日期': new Date().toISOString().split('T')[0],
   '影片製作_數量': '0', '影片插片_數量': '0', '影片費用': '0', '授權影片': '本合約影片', '授權期間': '2025/01/01-2025/12/31',
   '授權範圍': '', '授權費用': '0', '分潤期間': '2025/01/01-2025/12/31', '分潤比例': '0', '分潤保底': '0', '免單期間': '2025/01/01-2025/12/31',
@@ -16,7 +17,7 @@ const initialFormData: FormData = {
 
 const FIELD_LABELS: { [key: string]: string } = {
     '立約人': '立約人 (乙方)', '平台': '平台', '頻道': '頻道', '推廣產品': '推廣產品', 
-    '提供產品': '提供產品', '遊戲主題': '遊戲主題', '合約期間_起': '合約期間 (起)',
+    '提供產品': '提供產品', '影片限制': '影片限制 (如支數/時長)', '遊戲主題': '遊戲主題', '合約期間_起': '合約期間 (起)',
     '合約期間_迄': '合約期間 (迄)', '合約費用合計': '合約費用合計 (TWD)', '合約製作日期': '合約製作日期',
     '乙方電話': '乙方電話', '乙方地址': '乙方地址', '乙方身份證字號': '乙方身份證字號',
     '影片製作_數量': '影片製作 (數量)', '影片插片_數量': '影片插片 (數量)', '影片費用': '影片費用 (TWD)',
@@ -27,9 +28,22 @@ const FIELD_LABELS: { [key: string]: string } = {
 };
 const placeholderList = Object.entries(FIELD_LABELS).map(([key, label]) => ({ key, label }));
 
+interface SharePayload {
+    version: number;
+    generatedContract: string;
+    formData?: Record<string, any>;
+    selectedSections?: Record<string, boolean>;
+    selectedTemplateId?: string;
+    customTemplate?: {
+        name: string;
+        content: string;
+    };
+}
+
 const defaultTemplates: Template[] = [
     { id: 'video_placement_default', name: '影片置入', content: VIDEO_PLACEMENT_TEMPLATE_CONTENT },
-    { id: 'profit_sharing_default', name: '純分潤', content: PROFIT_SHARING_TEMPLATE_CONTENT }
+    { id: 'profit_sharing_default', name: '純分潤', content: PROFIT_SHARING_TEMPLATE_CONTENT },
+    { id: 'pure_material_default', name: '純素材', content: PURE_MATERIAL_TEMPLATE_CONTENT }
 ];
 const defaultTemplateIds = defaultTemplates.map(t => t.id);
 
@@ -113,6 +127,7 @@ const App: React.FC = () => {
     const [generatedContract, setGeneratedContract] = useState('');
     const [activeTab, setActiveTab] = useState('generate');
     const [isTotalFeeManuallySet, setIsTotalFeeManuallySet] = useState(false);
+    const [shareUrl, setShareUrl] = useState('');
     
     const templateContentRef = useRef<HTMLTextAreaElement>(null);
 
@@ -150,6 +165,77 @@ const App: React.FC = () => {
         selectedSections['profit_sharing'],
         isTotalFeeManuallySet
     ]);
+
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const shareParam = params.get('share');
+        if (!shareParam) {
+            return;
+        }
+
+        try {
+            const decompressed = decompressFromEncodedURIComponent(shareParam);
+            if (!decompressed) {
+                return;
+            }
+
+            const payload = JSON.parse(decompressed) as SharePayload;
+
+            if (payload.selectedSections) {
+                setSelectedSections(payload.selectedSections);
+            }
+
+            if (payload.formData) {
+                const combosPayload = Array.isArray(payload.formData['產品組合']) ? payload.formData['產品組合'] : [];
+                const restoredCombos = combosPayload.length > 0
+                    ? combosPayload.map((combo: any) => ({ id: crypto.randomUUID(), name: combo.name || '', price: combo.price || '' }))
+                    : [{ id: crypto.randomUUID(), name: '', price: '' }];
+
+                const mergedFormData: FormData = {
+                    ...initialFormData,
+                    ...payload.formData,
+                    '產品組合': restoredCombos
+                } as FormData;
+
+                setFormData(mergedFormData);
+            }
+
+            let templateIdToSelect: string | null = null;
+
+            if (payload.customTemplate && payload.customTemplate.content) {
+                const sharedTemplateName = payload.customTemplate.name || '分享範本';
+                const sharedTemplateContent = payload.customTemplate.content;
+
+                setCustomTemplates(prev => {
+                    const existing = prev.find(t => t.content === sharedTemplateContent && t.name === sharedTemplateName);
+                    if (existing) {
+                        templateIdToSelect = existing.id;
+                        return prev;
+                    }
+                    const sharedTemplateId = `shared-${crypto.randomUUID()}`;
+                    templateIdToSelect = sharedTemplateId;
+                    return [...prev, { id: sharedTemplateId, name: sharedTemplateName, content: sharedTemplateContent }];
+                });
+            } else if (payload.selectedTemplateId) {
+                templateIdToSelect = payload.selectedTemplateId;
+            }
+
+            if (templateIdToSelect) {
+                setSelectedTemplateId(templateIdToSelect);
+            }
+
+            if (payload.generatedContract) {
+                setGeneratedContract(payload.generatedContract);
+                setShareUrl(`${window.location.origin}${window.location.pathname}?share=${shareParam}`);
+            }
+
+            setActiveTab('generate');
+        } catch (error) {
+            console.error('Failed to load shared contract data:', error);
+        } finally {
+            window.history.replaceState({}, '', window.location.pathname);
+        }
+    }, [setCustomTemplates]);
     
     const saveNewTemplate = () => {
         if (!templateName.trim()) {
@@ -371,12 +457,70 @@ const App: React.FC = () => {
     
         finalContent = finalContent.replace(/^\s*\n/gm, '');
     
+        const combosForShare = (formData['產品組合'] as ProductCombo[])
+            .filter(combo => combo.name.trim() !== '' || combo.price.trim() !== '')
+            .map(combo => ({ name: combo.name, price: combo.price }));
+
+        const compactFormData: Record<string, any> = {};
+        Object.entries(formData).forEach(([key, value]) => {
+            if (key === '產品組合') {
+                if (combosForShare.length > 0) {
+                    compactFormData[key] = combosForShare;
+                }
+                return;
+            }
+            if (typeof value === 'string' && value.trim() !== '') {
+                compactFormData[key] = value;
+            }
+        });
+
+        const sectionsForShare = Object.fromEntries(
+            Object.entries(selectedSections).filter(([, value]) => value)
+        );
+
+        const sharePayload: SharePayload = {
+            version: 1,
+            generatedContract: finalContent,
+            selectedSections: sectionsForShare
+        };
+
+        if (Object.keys(compactFormData).length > 0) {
+            sharePayload.formData = compactFormData;
+        }
+
+        if (!defaultTemplateIds.includes(activeTemplate.id)) {
+            sharePayload.customTemplate = {
+                name: activeTemplate.name,
+                content: activeTemplate.content
+            };
+        } else {
+            sharePayload.selectedTemplateId = activeTemplate.id;
+        }
+
+        try {
+            const compressed = compressToEncodedURIComponent(JSON.stringify(sharePayload));
+            const baseUrl = `${window.location.origin}${window.location.pathname}`;
+            setShareUrl(`${baseUrl}?share=${compressed}`);
+        } catch (error) {
+            console.error('Failed to generate share link:', error);
+            setShareUrl('');
+        }
+
         setGeneratedContract(finalContent);
         setActiveTab('generate');
     }, [formData, selectedSections, templates, selectedTemplateId]);
 
     const isAllSelected = useMemo(() => SECTIONS.every(s => selectedSections[s.id]), [selectedSections]);
     const sectionsToDisplay = useMemo(() => ['basic', ...Object.keys(selectedSections).filter(key => selectedSections[key])], [selectedSections]);
+
+    const handleLineShare = useCallback(() => {
+        if (!shareUrl) {
+            alert('請先生成合約後再分享');
+            return;
+        }
+        const message = encodeURIComponent(`我剛生成了一份合約，點擊查看：${shareUrl}`);
+        window.open(`https://line.me/R/msg/text/?${message}`, '_blank');
+    }, [shareUrl]);
 
     const exportToDoc = (content: string, filename: string) => {
         const styledHtml = generateStyledHtmlForExport(content);
@@ -532,8 +676,9 @@ const App: React.FC = () => {
             case 'video_production': return (
                 <div key={sectionId} className="p-4 bg-gray-800/50 rounded-lg">
                     <h3 className="text-lg font-semibold text-blue-300 mb-4 border-b border-gray-700 pb-2">影片資料</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                         <FormInput label="影片製作 (數量)" name="影片製作_數量" value={formData['影片製作_數量']} onChange={handleFormChange} type="number" />
+                        <FormInput label="影片限制 (如支數/時長)" name="影片限制" value={formData['影片限制']} onChange={handleFormChange} />
                         <FormInput label="影片插片 (數量)" name="影片插片_數量" value={formData['影片插片_數量']} onChange={handleFormChange} type="number" />
                         <FormInput label="影片費用 (TWD)" name="影片費用" value={formData['影片費用']} onChange={handleFormChange} type="number" />
                     </div>
@@ -660,13 +805,19 @@ const App: React.FC = () => {
                              <div>
                                 {generatedContract ? (
                                     <>
-                                        <div className="flex justify-end gap-2 mb-4">
-                                            <button onClick={() => exportToDoc(generatedContract, 'contract')} className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition">
-                                                <DownloadIcon /> Word
-                                            </button>
-                                            <button onClick={() => exportToPdf('contract-output', 'contract')} className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition">
-                                                <DownloadIcon /> PDF
-                                            </button>
+                                        <div className="flex flex-col items-end gap-2 mb-4">
+                                            <div className="flex flex-wrap justify-end gap-2">
+                                                <button onClick={() => exportToDoc(generatedContract, 'contract')} className="flex items-center gap-2 bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition">
+                                                    <DownloadIcon /> Word
+                                                </button>
+                                                <button onClick={() => exportToPdf('contract-output', 'contract')} className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition">
+                                                    <DownloadIcon /> PDF
+                                                </button>
+                                                <button onClick={handleLineShare} disabled={!shareUrl} className={`flex items-center gap-2 font-bold py-2 px-4 rounded transition ${shareUrl ? 'bg-emerald-500 hover:bg-emerald-600 text-white' : 'bg-gray-600 text-gray-300 cursor-not-allowed'}`}>
+                                                    分享至LINE
+                                                </button>
+                                            </div>
+                                            <p className="text-xs text-gray-400">如不可使用時，麻煩點選左邊下載PDF按鈕，手動進行分享</p>
                                         </div>
                                         <div id="contract-output">
                                             <ContractRenderer content={generatedContract} />
