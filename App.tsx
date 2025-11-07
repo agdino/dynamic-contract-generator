@@ -252,7 +252,13 @@ const lzwCompress = (input: string): Uint16Array => {
         if (dictionary.has(wc)) {
             w = wc;
         } else {
-            codes.push(dictionary.get(w)!);
+            if (w !== '') {
+                const existingCode = dictionary.get(w);
+                if (existingCode === undefined) {
+                    throw new Error('Encountered unknown sequence during compression.');
+                }
+                codes.push(existingCode);
+            }
             if (dictSize < 65535) {
                 dictionary.set(wc, dictSize);
                 dictSize += 1;
@@ -262,7 +268,11 @@ const lzwCompress = (input: string): Uint16Array => {
     }
 
     if (w !== '') {
-        codes.push(dictionary.get(w)!);
+        const existingCode = dictionary.get(w);
+        if (existingCode === undefined) {
+            throw new Error('Encountered unknown sequence during compression.');
+        }
+        codes.push(existingCode);
     }
 
     return Uint16Array.from(codes);
@@ -307,7 +317,14 @@ const lzwDecompress = (compressed: Uint16Array): string => {
 
 const encodeSharePayload = (payload: SharePayload): string => {
     const json = JSON.stringify(payload);
-    const compressed = lzwCompress(json);
+    const textEncoder = new TextEncoder();
+    const jsonBytes = textEncoder.encode(json);
+    let binaryInput = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < jsonBytes.length; i += chunkSize) {
+        binaryInput += String.fromCharCode(...jsonBytes.subarray(i, i + chunkSize));
+    }
+    const compressed = lzwCompress(binaryInput);
     const bytes = new Uint8Array(compressed.length * 2);
 
     compressed.forEach((code, index) => {
@@ -334,7 +351,13 @@ const decodeSharePayload = (encoded: string): SharePayload => {
                 codes[i] = (bytes[i * 2] << 8) | bytes[i * 2 + 1];
             }
 
-            const json = lzwDecompress(codes);
+            const binaryString = lzwDecompress(codes);
+            const jsonBytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i += 1) {
+                jsonBytes[i] = binaryString.charCodeAt(i);
+            }
+            const textDecoder = new TextDecoder();
+            const json = textDecoder.decode(jsonBytes);
             return JSON.parse(json) as SharePayload;
         }
     } catch (error) {
