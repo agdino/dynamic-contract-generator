@@ -1,7 +1,7 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Template, FormData, ProductCombo, Section } from './types';
-import { SECTIONS, VIDEO_PLACEMENT_TEMPLATE_CONTENT, PROFIT_SHARING_TEMPLATE_CONTENT } from './constants';
+import { SECTIONS, VIDEO_PLACEMENT_TEMPLATE_CONTENT, PROFIT_SHARING_TEMPLATE_CONTENT, PURE_MATERIAL_TEMPLATE_CONTENT } from './constants';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { TrashIcon, DownloadIcon, ShareIcon } from './components/icons';
 
@@ -33,7 +33,8 @@ const SECTION_REQUIRED_FIELDS: Record<string, string[]> = {
 
 const defaultTemplates: Template[] = [
     { id: 'video_placement_default', name: '影片置入', content: VIDEO_PLACEMENT_TEMPLATE_CONTENT },
-    { id: 'profit_sharing_default', name: '純分潤', content: PROFIT_SHARING_TEMPLATE_CONTENT }
+    { id: 'profit_sharing_default', name: '純分潤', content: PROFIT_SHARING_TEMPLATE_CONTENT },
+    { id: 'pure_material_default', name: '純素材', content: PURE_MATERIAL_TEMPLATE_CONTENT }
 ];
 const defaultTemplateIds = defaultTemplates.map(t => t.id);
 
@@ -205,17 +206,141 @@ interface SharePayload {
 const SIGNATURE_SCALE_MIN = 0.1;
 const SIGNATURE_SCALE_MAX = 2;
 
-const encodeSharePayload = (payload: SharePayload): string => {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(JSON.stringify(payload));
+const SHARE_PREFIX = 'c.';
+
+const toBase64Url = (bytes: Uint8Array): string => {
+    if (bytes.length === 0) {
+        return '';
+    }
     let binary = '';
-    data.forEach(byte => {
+    bytes.forEach(byte => {
         binary += String.fromCharCode(byte);
     });
-    return btoa(binary);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+};
+
+const fromBase64Url = (value: string): Uint8Array => {
+    if (!value) {
+        return new Uint8Array(0);
+    }
+    let base64 = value.replace(/-/g, '+').replace(/_/g, '/');
+    while (base64.length % 4 !== 0) {
+        base64 += '=';
+    }
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+        bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+};
+
+const lzwCompress = (input: string): Uint16Array => {
+    if (!input) {
+        return new Uint16Array(0);
+    }
+    const dictionary = new Map<string, number>();
+    for (let i = 0; i < 256; i += 1) {
+        dictionary.set(String.fromCharCode(i), i);
+    }
+    let dictSize = 256;
+    let w = '';
+    const codes: number[] = [];
+
+    for (const c of input) {
+        const wc = w + c;
+        if (dictionary.has(wc)) {
+            w = wc;
+        } else {
+            codes.push(dictionary.get(w)!);
+            if (dictSize < 65535) {
+                dictionary.set(wc, dictSize);
+                dictSize += 1;
+            }
+            w = c;
+        }
+    }
+
+    if (w !== '') {
+        codes.push(dictionary.get(w)!);
+    }
+
+    return Uint16Array.from(codes);
+};
+
+const lzwDecompress = (compressed: Uint16Array): string => {
+    if (compressed.length === 0) {
+        return '';
+    }
+    const dictionary = new Map<number, string>();
+    for (let i = 0; i < 256; i += 1) {
+        dictionary.set(i, String.fromCharCode(i));
+    }
+    let dictSize = 256;
+    let w = String.fromCharCode(compressed[0]);
+    let result = w;
+
+    for (let i = 1; i < compressed.length; i += 1) {
+        const k = compressed[i];
+        let entry: string;
+
+        if (dictionary.has(k)) {
+            entry = dictionary.get(k)!;
+        } else if (k === dictSize) {
+            entry = w + w[0];
+        } else {
+            throw new Error('Invalid LZW code.');
+        }
+
+        result += entry;
+
+        if (dictSize < 65535) {
+            dictionary.set(dictSize, w + entry[0]);
+            dictSize += 1;
+        }
+
+        w = entry;
+    }
+
+    return result;
+};
+
+const encodeSharePayload = (payload: SharePayload): string => {
+    const json = JSON.stringify(payload);
+    const compressed = lzwCompress(json);
+    const bytes = new Uint8Array(compressed.length * 2);
+
+    compressed.forEach((code, index) => {
+        bytes[index * 2] = code >> 8;
+        bytes[index * 2 + 1] = code & 0xff;
+    });
+
+    const encoded = toBase64Url(bytes);
+    return `${SHARE_PREFIX}${encoded}`;
 };
 
 const decodeSharePayload = (encoded: string): SharePayload => {
+    try {
+        if (encoded.startsWith(SHARE_PREFIX)) {
+            const payload = encoded.slice(SHARE_PREFIX.length);
+            const bytes = fromBase64Url(payload);
+
+            if (bytes.length % 2 !== 0) {
+                throw new Error('Invalid compressed payload length');
+            }
+
+            const codes = new Uint16Array(bytes.length / 2);
+            for (let i = 0; i < codes.length; i += 1) {
+                codes[i] = (bytes[i * 2] << 8) | bytes[i * 2 + 1];
+            }
+
+            const json = lzwDecompress(codes);
+            return JSON.parse(json) as SharePayload;
+        }
+    } catch (error) {
+        console.warn('Failed to decode compressed share payload, attempting legacy decode.', error);
+    }
+
     const normalized = encoded.replace(/\s/g, '+');
     const binary = atob(normalized);
     const bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
