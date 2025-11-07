@@ -722,7 +722,7 @@ const App: React.FC = () => {
                 </div>
                 
                 <div className="p-4 bg-gray-800 rounded-lg shadow-lg">
-                    <div className="border-b border-gray-700">
+                    <div className="border-b border-gray-700 pb-4 mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                         <nav className="-mb-px flex space-x-6" aria-label="Tabs">
                             <button onClick={() => setActiveTab('generate')} className={`${activeTab === 'generate' ? 'border-blue-400 text-blue-300' : 'border-transparent text-gray-400 hover:text-gray-200 hover:border-gray-500'} whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition`}>
                                 生成合約
@@ -731,9 +731,12 @@ const App: React.FC = () => {
                                 編輯範本
                             </button>
                         </nav>
+                        <button onClick={shareCurrentTemplate} className="self-start md:self-auto bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded transition" type="button">
+                            分享範本
+                        </button>
                     </div>
 
-                    <div className="pt-6">
+                    <div className="pt-2">
                         {activeTab === 'generate' && (
                              <div>
                                 {generatedContract ? (
@@ -800,7 +803,6 @@ const App: React.FC = () => {
                                         className="w-full bg-gray-900 border border-gray-600 rounded-md p-3 text-gray-300 font-mono text-sm focus:ring-2 focus:ring-blue-500" />
                                 </div>
                                 <div className="flex flex-wrap gap-2 justify-end">
-                                    <button onClick={shareCurrentTemplate} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded transition" type="button">分享範本</button>
                                     <button onClick={saveNewTemplate} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition" type="button">另存為新範本</button>
                                     <button onClick={updateTemplate} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition disabled:bg-gray-500" disabled={defaultTemplateIds.includes(selectedTemplateId)} type="button">更新目前範本</button>
                                     <button onClick={deleteTemplate} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition disabled:bg-gray-500" disabled={defaultTemplateIds.includes(selectedTemplateId)} type="button">刪除目前範本</button>
