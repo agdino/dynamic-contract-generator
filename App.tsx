@@ -1,6 +1,6 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
-import { Template, FormData, ProductCombo, Section } from './types';
+import { Template, FormData, ProductCombo } from './types';
 import { SECTIONS, VIDEO_PLACEMENT_TEMPLATE_CONTENT, PROFIT_SHARING_TEMPLATE_CONTENT, PURE_MATERIAL_TEMPLATE_CONTENT } from './constants';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { TrashIcon, DownloadIcon, ShareIcon } from './components/icons';
@@ -29,6 +29,203 @@ const placeholderList = Object.entries(FIELD_LABELS).map(([key, label]) => ({ ke
 
 const SECTION_REQUIRED_FIELDS: Record<string, string[]> = {
     notes: ['備註']
+};
+
+const CHINESE_NUMERALS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二', '十三', '十四', '十五'];
+
+const cloneInitialFormData = (): FormData => {
+    const cloned = JSON.parse(JSON.stringify(initialFormData)) as FormData;
+    if (!Array.isArray(cloned['產品組合'])) {
+        cloned['產品組合'] = [];
+    }
+    return cloned;
+};
+
+const normalizeProductCombos = (combos: unknown): ProductCombo[] => {
+    if (!Array.isArray(combos)) {
+        return [];
+    }
+    return combos
+        .filter(item => item && typeof item === 'object')
+        .map(item => {
+            const record = item as Record<string, unknown>;
+            return {
+                id: typeof record.id === 'string' && record.id ? record.id : crypto.randomUUID(),
+                name: typeof record.name === 'string' ? record.name : '',
+                price: typeof record.price === 'string' ? record.price : ''
+            };
+        });
+};
+
+const generateContractContent = (
+    templateContent: string,
+    formData: FormData,
+    enabledSectionIds: Iterable<string>
+): string => {
+    const enabledSections = new Set<string>(enabledSectionIds);
+
+    let content = templateContent;
+
+    content = content.replace(/{{#section_(\w+)}}([\s\S]*?){{\/section_\1}}/g, (match, sectionKey, sectionContent) => {
+        if (!enabledSections.has(sectionKey)) {
+            return '';
+        }
+
+        const requiredFields = SECTION_REQUIRED_FIELDS[sectionKey];
+        if (requiredFields?.length) {
+            const hasRequiredContent = requiredFields.some(fieldKey => {
+                const value = formData[fieldKey as keyof FormData];
+                if (Array.isArray(value)) {
+                    return value.some(item => {
+                        if (typeof item === 'string') {
+                            return item.trim() !== '';
+                        }
+                        if (item && typeof item === 'object') {
+                            const maybeRecord = item as Record<string, unknown>;
+                            const maybeName = typeof maybeRecord.name === 'string' ? maybeRecord.name.trim() : '';
+                            const maybePrice = typeof maybeRecord.price === 'string' ? maybeRecord.price.trim() : '';
+                            return maybeName !== '' || maybePrice !== '';
+                        }
+                        return false;
+                    });
+                }
+                return typeof value === 'string' && value.trim() !== '';
+            });
+
+            if (!hasRequiredContent) {
+                return '';
+            }
+        }
+
+        return sectionContent;
+    });
+
+    const lines = content.split('\n');
+
+    let processedContent = lines.map(line => {
+        const match = line.match(/{{(\S+?)}}/);
+        if (!match) return line;
+
+        const key = match[1];
+        const value = String(formData[key as keyof FormData] || '');
+
+        if (value.trim() === '' || value.trim() === '0') {
+             if (line.match(/^\s*\d+(\.\d+)*\s/)) {
+                 return null;
+             }
+        }
+        return line;
+    }).filter(line => line !== null).join('\n');
+
+    Object.keys(formData).forEach(key => {
+        const placeholder = new RegExp(`{{${key}}}`, 'g');
+        if (key === '產品組合') {
+            const combos = normalizeProductCombos(formData[key]);
+            const comboString = combos
+                .filter(c => c.name.trim() !== '' || c.price.trim() !== '')
+                .map(c => `${c.name} (優惠價: ${c.price})`)
+                .join('、 ');
+            processedContent = processedContent.replace(placeholder, comboString || '無');
+        } else {
+            processedContent = processedContent.replace(placeholder, String(formData[key as keyof FormData]) || '');
+        }
+    });
+
+    let mainSectionCounter = 0;
+    processedContent = processedContent.replace(/^(\s*)[一二三四五六七八九十]+、/gm, (match, leadingWhitespace) => {
+        const newNumber = CHINESE_NUMERALS[mainSectionCounter] ?? CHINESE_NUMERALS[CHINESE_NUMERALS.length - 1];
+        mainSectionCounter += 1;
+        return `${leadingWhitespace}${newNumber}、`;
+    });
+
+    const finalLines = processedContent.split('\n');
+
+    let secondLevelCounter = 0;
+    let currentSecondLevelNumber = '';
+    let thirdLevelCounter = 0;
+
+    const renumberedLines = finalLines.map(line => {
+        const trimmedLine = line.trim();
+
+        if (/^[一二三四五六七八九十]+、/.test(trimmedLine)) {
+            secondLevelCounter = 0;
+            currentSecondLevelNumber = '';
+            thirdLevelCounter = 0;
+            return line;
+        }
+
+        const secondLevelMatch = line.match(/^(\s*)(\d+)([\.．、])(\s+)/);
+        if (secondLevelMatch) {
+            secondLevelCounter += 1;
+            currentSecondLevelNumber = `${secondLevelCounter}`;
+            thirdLevelCounter = 0;
+
+            const leadingWhitespace = secondLevelMatch[1];
+            const punctuation = secondLevelMatch[3];
+            const spacing = secondLevelMatch[4];
+            const restOfLine = line.slice(secondLevelMatch[0].length);
+
+            return `${leadingWhitespace}${currentSecondLevelNumber}${punctuation}${spacing}${restOfLine}`;
+        }
+
+        const thirdLevelMatch = line.match(/^(\s*)(\d+)\.(\d+)(\s+)/);
+        if (thirdLevelMatch && currentSecondLevelNumber) {
+            thirdLevelCounter += 1;
+
+            const leadingWhitespace = thirdLevelMatch[1];
+            const spacing = thirdLevelMatch[4];
+            const restOfLine = line.slice(thirdLevelMatch[0].length);
+            const newNumber = `${currentSecondLevelNumber}.${thirdLevelCounter}`;
+
+            return `${leadingWhitespace}${newNumber}${spacing}${restOfLine}`;
+        }
+
+        return line;
+    });
+
+    let finalContent = renumberedLines.join('\n');
+
+    finalContent = finalContent.replace(/^\s*\n/gm, '');
+
+    return finalContent;
+};
+
+const prepareFormDataForShare = (data: FormData): Partial<FormData> => {
+    const cloned = JSON.parse(JSON.stringify(data)) as FormData;
+    if (Array.isArray(cloned['產品組合'])) {
+        cloned['產品組合'] = cloned['產品組合']
+            .filter(combo => {
+                if (!combo || typeof combo !== 'object') return false;
+                const name = typeof combo.name === 'string' ? combo.name.trim() : '';
+                const price = typeof combo.price === 'string' ? combo.price.trim() : '';
+                return name !== '' || price !== '';
+            })
+            .map(combo => ({
+                id: typeof combo.id === 'string' && combo.id ? combo.id : crypto.randomUUID(),
+                name: typeof combo.name === 'string' ? combo.name : '',
+                price: typeof combo.price === 'string' ? combo.price : ''
+            }));
+    }
+    return cloned;
+};
+
+const hydrateFormDataFromPayload = (payload: SharePayload): FormData => {
+    const hydrated = cloneInitialFormData();
+    if (!payload.formData) {
+        return hydrated;
+    }
+
+    Object.entries(payload.formData).forEach(([key, value]) => {
+        if (key === '產品組合') {
+            hydrated['產品組合'] = normalizeProductCombos(value);
+            return;
+        }
+        if (typeof value === 'string') {
+            hydrated[key as keyof FormData] = value;
+        }
+    });
+
+    return hydrated;
 };
 
 const defaultTemplates: Template[] = [
@@ -199,8 +396,14 @@ const generateStyledHtmlForExport = (content: string): string => {
 
 interface SharePayload {
     id: string;
-    content: string;
     createdAt: number;
+    version?: number;
+    content?: string;
+    templateId?: string;
+    templateName?: string;
+    templateContent?: string;
+    enabledSections?: string[];
+    formData?: Partial<FormData>;
 }
 
 const SIGNATURE_SCALE_MIN = 0.1;
@@ -586,6 +789,23 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
 
     const shareLink = useMemo(() => window.location.href, []);
 
+    const contractContent = useMemo(() => {
+        if (payload.version === 2) {
+            const templateSource = payload.templateContent ?? (() => {
+                if (!payload.templateId) return undefined;
+                const matched = defaultTemplates.find(t => t.id === payload.templateId);
+                return matched?.content;
+            })();
+
+            if (templateSource) {
+                const hydratedFormData = hydrateFormDataFromPayload(payload);
+                return generateContractContent(templateSource, hydratedFormData, payload.enabledSections ?? []);
+            }
+        }
+
+        return payload.content ?? '';
+    }, [payload]);
+
     const alignSignatureToTarget = useCallback(() => {
         if (!signatureDataUrl || hasManualSignatureAdjustment) {
             return;
@@ -773,12 +993,15 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
                     <div>
                         <h1 className="text-3xl font-bold text-blue-300">合約簽署頁面</h1>
                         <p className="text-sm text-gray-400 mt-1">分享時間：{new Date(payload.createdAt).toLocaleString()}</p>
+                        {payload.templateName && (
+                            <p className="text-sm text-gray-400">範本：{payload.templateName}</p>
+                        )}
                     </div>
                 </div>
 
                 <div ref={contractRef} className="relative">
                     <ContractRenderer
-                        content={payload.content}
+                        content={contractContent}
                         onSignatureSlotClick={handleOpenSignatureModal}
                         signatureSlotInteractive
                     />
@@ -1118,129 +1341,10 @@ const App: React.FC = () => {
             alert('請選擇一個範本');
             return;
         }
-    
-        let content = activeTemplate.content;
-    
-        content = content.replace(/{{#section_(\w+)}}([\s\S]*?){{\/section_\1}}/g, (match, sectionKey, sectionContent) => {
-            if (!selectedSections[sectionKey]) {
-                return '';
-            }
 
-            const requiredFields = SECTION_REQUIRED_FIELDS[sectionKey];
-            if (requiredFields?.length) {
-                const hasRequiredContent = requiredFields.some(fieldKey => {
-                    const value = formData[fieldKey as keyof FormData];
-                    if (Array.isArray(value)) {
-                        return value.some(item => {
-                            if (typeof item === 'string') {
-                                return item.trim() !== '';
-                            }
-                            if (typeof item === 'object' && item !== null) {
-                                const maybeName = 'name' in item ? String(item.name ?? '').trim() : '';
-                                const maybePrice = 'price' in item ? String(item.price ?? '').trim() : '';
-                                return maybeName !== '' || maybePrice !== '';
-                            }
-                            return false;
-                        });
-                    }
-                    return typeof value === 'string' && value.trim() !== '';
-                });
+        const enabledSectionIds = Object.keys(selectedSections).filter(sectionId => selectedSections[sectionId]);
+        const finalContent = generateContractContent(activeTemplate.content, formData, enabledSectionIds);
 
-                if (!hasRequiredContent) {
-                    return '';
-                }
-            }
-
-            return sectionContent;
-        });
-    
-        const lines = content.split('\n');
-        
-        let processedContent = lines.map(line => {
-            const match = line.match(/{{(\S+?)}}/);
-            if (!match) return line;
-    
-            const key = match[1];
-            const value = String(formData[key as keyof FormData] || '');
-
-            if (value.trim() === '' || value.trim() === '0') {
-                 if (line.match(/^\s*\d+(\.\d+)*\s/)) {
-                     return null;
-                 }
-            }
-            return line;
-        }).filter(line => line !== null).join('\n');
-    
-        Object.keys(formData).forEach(key => {
-            const placeholder = new RegExp(`{{${key}}}`, 'g');
-            if (key === '產品組合') {
-                const combos = formData[key] as ProductCombo[];
-                const comboString = combos
-                    .filter(c => c.name.trim() !== '')
-                    .map(c => `${c.name} (優惠價: ${c.price})`)
-                    .join('、 ');
-                processedContent = processedContent.replace(placeholder, comboString || '無');
-            } else {
-                processedContent = processedContent.replace(placeholder, String(formData[key as keyof FormData]) || '');
-            }
-        });
-    
-        const chineseNumerals = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十', '十一', '十二'];
-        let mainSectionCounter = 0;
-        processedContent = processedContent.replace(/^(\s*)[一二三四五六七八九十]+、/gm, (match, leadingWhitespace) => {
-            const newNumber = chineseNumerals[mainSectionCounter++];
-            return `${leadingWhitespace}${newNumber}、`;
-        });
-    
-        const finalLines = processedContent.split('\n');
-
-        let secondLevelCounter = 0;
-        let currentSecondLevelNumber = '';
-        let thirdLevelCounter = 0;
-
-        const renumberedLines = finalLines.map(line => {
-            const trimmedLine = line.trim();
-
-            if (/^[一二三四五六七八九十]+、/.test(trimmedLine)) {
-                secondLevelCounter = 0;
-                currentSecondLevelNumber = '';
-                thirdLevelCounter = 0;
-                return line;
-            }
-
-            const secondLevelMatch = line.match(/^(\s*)(\d+)([\.．、])(\s+)/);
-            if (secondLevelMatch) {
-                secondLevelCounter += 1;
-                currentSecondLevelNumber = `${secondLevelCounter}`;
-                thirdLevelCounter = 0;
-
-                const leadingWhitespace = secondLevelMatch[1];
-                const punctuation = secondLevelMatch[3];
-                const spacing = secondLevelMatch[4];
-                const restOfLine = line.slice(secondLevelMatch[0].length);
-
-                return `${leadingWhitespace}${currentSecondLevelNumber}${punctuation}${spacing}${restOfLine}`;
-            }
-
-            const thirdLevelMatch = line.match(/^(\s*)(\d+)\.(\d+)(\s+)/);
-            if (thirdLevelMatch && currentSecondLevelNumber) {
-                thirdLevelCounter += 1;
-
-                const leadingWhitespace = thirdLevelMatch[1];
-                const spacing = thirdLevelMatch[4];
-                const restOfLine = line.slice(thirdLevelMatch[0].length);
-                const newNumber = `${currentSecondLevelNumber}.${thirdLevelCounter}`;
-
-                return `${leadingWhitespace}${newNumber}${spacing}${restOfLine}`;
-            }
-
-            return line;
-        });
-
-        let finalContent = renumberedLines.join('\n');
-    
-        finalContent = finalContent.replace(/^\s*\n/gm, '');
-    
         setGeneratedContract(finalContent);
         setActiveTab('generate');
     }, [formData, selectedSections, templates, selectedTemplateId]);
@@ -1292,10 +1396,22 @@ const App: React.FC = () => {
             return;
         }
 
+        const activeTemplate = templates.find(t => t.id === selectedTemplateId);
+        if (!activeTemplate) {
+            alert('請先選擇一個範本');
+            return;
+        }
+
+        const enabledSectionIds = Object.keys(selectedSections).filter(sectionId => selectedSections[sectionId]);
         const payload: SharePayload = {
             id: crypto.randomUUID(),
-            content: generatedContract,
-            createdAt: Date.now()
+            createdAt: Date.now(),
+            version: 2,
+            templateId: activeTemplate.id,
+            templateName: activeTemplate.name,
+            templateContent: defaultTemplateIds.includes(activeTemplate.id) ? undefined : activeTemplate.content,
+            enabledSections: enabledSectionIds,
+            formData: prepareFormDataForShare(formData)
         };
 
         const encoded = encodeSharePayload(payload);
@@ -1320,7 +1436,7 @@ const App: React.FC = () => {
         if (!copied) {
             window.prompt('請複製以下分享連結', shareUrl);
         }
-    }, [generatedContract]);
+    }, [generatedContract, templates, selectedTemplateId, selectedSections, formData]);
     
     const renderFormSection = (sectionId: string) => {
         switch (sectionId) {
