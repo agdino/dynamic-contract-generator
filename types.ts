@@ -14,6 +14,7 @@ export interface FormData {
   '推廣產品': string;
   '提供產品': string;
   '遊戲主題': string;
+  '影片限制': string;
   '合約期間_起': string;
   '合約期間_迄': string;
   '合約費用合計': string;

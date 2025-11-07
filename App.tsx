@@ -1,12 +1,13 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from './utils/compression';
 import { Template, FormData, ProductCombo, Section } from './types';
-import { SECTIONS, VIDEO_PLACEMENT_TEMPLATE_CONTENT, PROFIT_SHARING_TEMPLATE_CONTENT } from './constants';
+import { SECTIONS, VIDEO_PLACEMENT_TEMPLATE_CONTENT, PROFIT_SHARING_TEMPLATE_CONTENT, PURE_ASSET_TEMPLATE_CONTENT } from './constants';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { TrashIcon, DownloadIcon } from './components/icons';
 
 const initialFormData: FormData = {
-  '立約人': '', '平台': 'YouTube', '頻道': '', '推廣產品': '', '提供產品': '', '遊戲主題': '',
+  '立約人': '', '平台': 'YouTube', '頻道': '', '推廣產品': '', '提供產品': '', '遊戲主題': '', '影片限制': '',
   '合約期間_起': '', '合約期間_迄': '', '合約費用合計': '0', '合約製作日期': new Date().toISOString().split('T')[0],
   '影片製作_數量': '0', '影片插片_數量': '0', '影片費用': '0', '授權影片': '本合約影片', '授權期間': '2025/01/01-2025/12/31',
   '授權範圍': '', '授權費用': '0', '分潤期間': '2025/01/01-2025/12/31', '分潤比例': '0', '分潤保底': '0', '免單期間': '2025/01/01-2025/12/31',
@@ -15,8 +16,8 @@ const initialFormData: FormData = {
 };
 
 const FIELD_LABELS: { [key: string]: string } = {
-    '立約人': '立約人 (乙方)', '平台': '平台', '頻道': '頻道', '推廣產品': '推廣產品', 
-    '提供產品': '提供產品', '遊戲主題': '遊戲主題', '合約期間_起': '合約期間 (起)',
+    '立約人': '立約人 (乙方)', '平台': '平台', '頻道': '頻道', '推廣產品': '推廣產品',
+    '提供產品': '提供產品', '遊戲主題': '遊戲主題', '影片限制': '影片限制', '合約期間_起': '合約期間 (起)',
     '合約期間_迄': '合約期間 (迄)', '合約費用合計': '合約費用合計 (TWD)', '合約製作日期': '合約製作日期',
     '乙方電話': '乙方電話', '乙方地址': '乙方地址', '乙方身份證字號': '乙方身份證字號',
     '影片製作_數量': '影片製作 (數量)', '影片插片_數量': '影片插片 (數量)', '影片費用': '影片費用 (TWD)',
@@ -29,7 +30,8 @@ const placeholderList = Object.entries(FIELD_LABELS).map(([key, label]) => ({ ke
 
 const defaultTemplates: Template[] = [
     { id: 'video_placement_default', name: '影片置入', content: VIDEO_PLACEMENT_TEMPLATE_CONTENT },
-    { id: 'profit_sharing_default', name: '純分潤', content: PROFIT_SHARING_TEMPLATE_CONTENT }
+    { id: 'profit_sharing_default', name: '純分潤', content: PROFIT_SHARING_TEMPLATE_CONTENT },
+    { id: 'pure_asset_default', name: '純素材', content: PURE_ASSET_TEMPLATE_CONTENT }
 ];
 const defaultTemplateIds = defaultTemplates.map(t => t.id);
 
@@ -115,6 +117,48 @@ const App: React.FC = () => {
     const [isTotalFeeManuallySet, setIsTotalFeeManuallySet] = useState(false);
     
     const templateContentRef = useRef<HTMLTextAreaElement>(null);
+
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const sharedParam = params.get('shared');
+        if (!sharedParam) {
+            return;
+        }
+
+        try {
+            const decompressed = decompressFromEncodedURIComponent(sharedParam);
+            if (!decompressed) {
+                throw new Error('分享內容無法解析');
+            }
+            const parsed = JSON.parse(decompressed) as { name?: string; content?: string };
+            const importedTemplate: Template = {
+                id: `shared_${crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2)}`,
+                name: (parsed.name && String(parsed.name).trim()) || '共享範本',
+                content: (parsed.content && String(parsed.content)) || ''
+            };
+
+            let resolvedId = importedTemplate.id;
+            setCustomTemplates(prev => {
+                const existing = prev.find(t => t.name === importedTemplate.name && t.content === importedTemplate.content);
+                if (existing) {
+                    resolvedId = existing.id;
+                    return prev;
+                }
+                return [...prev, importedTemplate];
+            });
+
+            setSelectedTemplateId(resolvedId);
+            alert('已載入分享範本，可進行編輯或另存為新範本。');
+        } catch (error) {
+            console.error('解析分享範本失敗：', error);
+            alert('分享連結解析失敗，請確認網址是否完整。');
+        } finally {
+            params.delete('shared');
+            const newSearch = params.toString();
+            const newUrl = `${window.location.pathname}${newSearch ? `?${newSearch}` : ''}${window.location.hash}`;
+            window.history.replaceState({}, document.title, newUrl);
+        }
+    }, [setCustomTemplates]);
 
     useEffect(() => {
         const template = templates.find(t => t.id === selectedTemplateId);
@@ -375,6 +419,39 @@ const App: React.FC = () => {
         setActiveTab('generate');
     }, [formData, selectedSections, templates, selectedTemplateId]);
 
+    const shareCurrentTemplate = useCallback(async () => {
+        if (!templateContent.trim()) {
+            alert('範本內容不能為空');
+            return;
+        }
+
+        try {
+            const payload = JSON.stringify({ name: templateName || '分享範本', content: templateContent });
+            const compressed = compressToEncodedURIComponent(payload);
+            if (!compressed) {
+                throw new Error('壓縮分享內容失敗');
+            }
+
+            const shareUrl = `${window.location.origin}${window.location.pathname}?shared=${compressed}`;
+
+            if ('share' in navigator && typeof navigator.share === 'function') {
+                await navigator.share({
+                    title: templateName || '合約範本',
+                    text: '與你分享一份合約範本',
+                    url: shareUrl
+                });
+            } else if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+                await navigator.clipboard.writeText(shareUrl);
+                alert('分享連結已複製到剪貼簿');
+            } else {
+                window.prompt('請複製以下連結以分享範本：', shareUrl);
+            }
+        } catch (error) {
+            console.error('分享範本時發生錯誤：', error);
+            alert('分享範本時發生錯誤，請稍後再試。');
+        }
+    }, [templateName, templateContent]);
+
     const isAllSelected = useMemo(() => SECTIONS.every(s => selectedSections[s.id]), [selectedSections]);
     const sectionsToDisplay = useMemo(() => ['basic', ...Object.keys(selectedSections).filter(key => selectedSections[key])], [selectedSections]);
 
@@ -519,6 +596,7 @@ const App: React.FC = () => {
                         <FormInput label="推廣產品" name="推廣產品" value={formData['推廣產品']} onChange={handleFormChange} />
                         <FormInput label="提供產品" name="提供產品" value={formData['提供產品']} onChange={handleFormChange} />
                         <FormInput label="遊戲主題" name="遊戲主題" value={formData['遊戲主題']} onChange={handleFormChange} />
+                        <FormInput label="影片限制" name="影片限制" value={formData['影片限制']} onChange={handleFormChange} />
                         <FormInput label="合約期間 (起)" name="合約期間_起" value={formData['合約期間_起']} onChange={handleFormChange} type="date" />
                         <FormInput label="合約期間 (迄)" name="合約期間_迄" value={formData['合約期間_迄']} onChange={handleFormChange} type="date" />
                         <FormInput label="合約費用合計 (TWD)" name="合約費用合計" value={formData['合約費用合計']} onChange={handleFormChange} type="text" />
@@ -722,6 +800,7 @@ const App: React.FC = () => {
                                         className="w-full bg-gray-900 border border-gray-600 rounded-md p-3 text-gray-300 font-mono text-sm focus:ring-2 focus:ring-blue-500" />
                                 </div>
                                 <div className="flex flex-wrap gap-2 justify-end">
+                                    <button onClick={shareCurrentTemplate} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded transition" type="button">分享範本</button>
                                     <button onClick={saveNewTemplate} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition" type="button">另存為新範本</button>
                                     <button onClick={updateTemplate} className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition disabled:bg-gray-500" disabled={defaultTemplateIds.includes(selectedTemplateId)} type="button">更新目前範本</button>
                                     <button onClick={deleteTemplate} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition disabled:bg-gray-500" disabled={defaultTemplateIds.includes(selectedTemplateId)} type="button">刪除目前範本</button>
