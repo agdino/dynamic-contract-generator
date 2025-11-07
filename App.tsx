@@ -1,12 +1,12 @@
 
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { Template, FormData, ProductCombo, Section } from './types';
-import { SECTIONS, VIDEO_PLACEMENT_TEMPLATE_CONTENT, PROFIT_SHARING_TEMPLATE_CONTENT } from './constants';
+import { SECTIONS, VIDEO_PLACEMENT_TEMPLATE_CONTENT, PURE_MATERIAL_TEMPLATE_CONTENT, PROFIT_SHARING_TEMPLATE_CONTENT } from './constants';
 import { useLocalStorage } from './hooks/useLocalStorage';
 import { TrashIcon, DownloadIcon } from './components/icons';
 
 const initialFormData: FormData = {
-  '立約人': '', '平台': 'YouTube', '頻道': '', '推廣產品': '', '提供產品': '', '遊戲主題': '',
+  '立約人': '', '平台': 'YouTube', '頻道': '', '推廣產品': '', '提供產品': '', '影片限制': '', '遊戲主題': '',
   '合約期間_起': '', '合約期間_迄': '', '合約費用合計': '0', '合約製作日期': new Date().toISOString().split('T')[0],
   '影片製作_數量': '0', '影片插片_數量': '0', '影片費用': '0', '授權影片': '本合約影片', '授權期間': '2025/01/01-2025/12/31',
   '授權範圍': '', '授權費用': '0', '分潤期間': '2025/01/01-2025/12/31', '分潤比例': '0', '分潤保底': '0', '免單期間': '2025/01/01-2025/12/31',
@@ -16,7 +16,7 @@ const initialFormData: FormData = {
 
 const FIELD_LABELS: { [key: string]: string } = {
     '立約人': '立約人 (乙方)', '平台': '平台', '頻道': '頻道', '推廣產品': '推廣產品', 
-    '提供產品': '提供產品', '遊戲主題': '遊戲主題', '合約期間_起': '合約期間 (起)',
+    '提供產品': '提供產品', '影片限制': '影片限制', '遊戲主題': '遊戲主題', '合約期間_起': '合約期間 (起)',
     '合約期間_迄': '合約期間 (迄)', '合約費用合計': '合約費用合計 (TWD)', '合約製作日期': '合約製作日期',
     '乙方電話': '乙方電話', '乙方地址': '乙方地址', '乙方身份證字號': '乙方身份證字號',
     '影片製作_數量': '影片製作 (數量)', '影片插片_數量': '影片插片 (數量)', '影片費用': '影片費用 (TWD)',
@@ -29,6 +29,7 @@ const placeholderList = Object.entries(FIELD_LABELS).map(([key, label]) => ({ ke
 
 const defaultTemplates: Template[] = [
     { id: 'video_placement_default', name: '影片置入', content: VIDEO_PLACEMENT_TEMPLATE_CONTENT },
+    { id: 'pure_material_default', name: '純素材', content: PURE_MATERIAL_TEMPLATE_CONTENT },
     { id: 'profit_sharing_default', name: '純分潤', content: PROFIT_SHARING_TEMPLATE_CONTENT }
 ];
 const defaultTemplateIds = defaultTemplates.map(t => t.id);
@@ -518,6 +519,7 @@ const App: React.FC = () => {
                         <FormInput label="頻道" name="頻道" value={formData['頻道']} onChange={handleFormChange} />
                         <FormInput label="推廣產品" name="推廣產品" value={formData['推廣產品']} onChange={handleFormChange} />
                         <FormInput label="提供產品" name="提供產品" value={formData['提供產品']} onChange={handleFormChange} />
+                        <FormInput label="影片限制" name="影片限制" value={formData['影片限制']} onChange={handleFormChange} />
                         <FormInput label="遊戲主題" name="遊戲主題" value={formData['遊戲主題']} onChange={handleFormChange} />
                         <FormInput label="合約期間 (起)" name="合約期間_起" value={formData['合約期間_起']} onChange={handleFormChange} type="date" />
                         <FormInput label="合約期間 (迄)" name="合約期間_迄" value={formData['合約期間_迄']} onChange={handleFormChange} type="date" />

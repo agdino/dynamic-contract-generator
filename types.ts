@@ -13,6 +13,7 @@ export interface FormData {
   '頻道': string;
   '推廣產品': string;
   '提供產品': string;
+  '影片限制': string;
   '遊戲主題': string;
   '合約期間_起': string;
   '合約期間_迄': string;
