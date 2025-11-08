@@ -303,7 +303,8 @@ const ContractRenderer: React.FC<ContractRendererProps> = ({ content, onSignatur
                         >
                             <span
                                 aria-hidden="true"
-                                className="font-mono text-lg tracking-[0.3em] text-red-500/40 select-none"
+                                className="font-mono text-lg text-red-500/40 select-none"
+                                style={{ letterSpacing: 'normal' }}
                             >
                                 {signaturePlaceholder}
                             </span>
@@ -336,61 +337,275 @@ const ContractRenderer: React.FC<ContractRendererProps> = ({ content, onSignatur
     };
 
     return (
-        <div className="bg-white text-black p-8 sm:p-12 rounded-lg shadow-lg font-serif lining-nums">
+        <div
+            className="bg-white text-black p-8 sm:p-12 rounded-lg shadow-lg"
+            style={{
+                fontFamily: "'Noto Sans TC', 'Noto Sans CJK TC', 'Source Han Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif",
+                letterSpacing: 'normal'
+            }}
+        >
             {content.split('\n').map(renderLine)}
         </div>
     );
 };
 
-const generateStyledHtmlForExport = (content: string): string => {
-    if (!content) return '';
+const escapeHtml = (value: string): string =>
+    value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 
-    const renderLineToHtml = (line: string): string => {
-        const trimmedLine = line.trim();
-        const basePStyle = `margin-bottom: 8px; text-align: justify; line-height: 1.6;`;
+const renderContractLineToHtml = (line: string): string => {
+    const trimmedLine = line.trim();
+    const escapedLine = escapeHtml(line);
+    const baseParagraph = `margin: 0 0 12px; text-align: justify; line-height: 1.75; white-space: pre-wrap; letter-spacing: normal;`;
 
-        if (trimmedLine === '乙方') {
+    if (trimmedLine === '乙方') {
+        return `
+            <div style="margin-top: 24px; letter-spacing: normal;">
+                <h3 style="font-size: 1.17em; font-weight: 700; margin-bottom: 8px;">${escapeHtml(trimmedLine)}</h3>
+            </div>
+        `;
+    }
+
+    if (trimmedLine.endsWith('專案合作備忘錄')) {
+        return `<h2 style="font-size: 1.5em; font-weight: 700; text-align: center; margin-bottom: 32px; letter-spacing: normal;">${escapeHtml(trimmedLine)}</h2>`;
+    }
+    if (/^[一二三四五六七八九十]+、/.test(trimmedLine) || trimmedLine === '甲方') {
+        return `<h3 style="font-size: 1.17em; font-weight: 700; margin-top: 24px; margin-bottom: 12px; letter-spacing: normal;">${escapeHtml(trimmedLine)}</h3>`;
+    }
+    if (trimmedLine.startsWith('姓名：')) {
+        const nameMatch = line.match(/^(姓名：)([_＿]+)(（.*)$/);
+        if (nameMatch) {
+            const [, prefix, signaturePlaceholder, suffix] = nameMatch;
             return `
-                <div style="margin-top: 24px;">
-                    <h3 style="font-size: 1.17em; font-weight: bold; margin-bottom: 8px;">${trimmedLine}</h3>
+                <div data-signature-name-line style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; letter-spacing: normal;">
+                    <span>${escapeHtml(prefix)}</span>
+                    <span style="position: relative; display: inline-flex; min-width: 220px; max-width: 320px; align-items: center; justify-content: center; padding: 16px 32px; border: 2px solid #ef4444; border-radius: 4px;">
+                        <span aria-hidden="true" style="font-family: 'Courier New', monospace; font-size: 1.1em; letter-spacing: normal; color: rgba(239, 68, 68, 0.4); user-select: none;">${escapeHtml(signaturePlaceholder)}</span>
+                        <span data-signature-target style="position: absolute; top: 8px; right: 8px; bottom: 8px; left: 8px; border-radius: 4px;"></span>
+                    </span>
+                    <span>${escapeHtml(suffix)}</span>
                 </div>
             `;
         }
+        return `<p data-signature-name-line style="${baseParagraph}">${escapedLine}</p>`;
+    }
+    if (/^\d+(\.\d+)*\s/.test(trimmedLine)) {
+        return `<p style="${baseParagraph} padding-left: 1.5em; text-indent: -1.5em;">${escapedLine}</p>`;
+    }
+    if (trimmedLine === '') {
+        return `<div style="height: 0.5em;"></div>`;
+    }
+    return `<p style="${baseParagraph}">${escapedLine}</p>`;
+};
 
-        if (trimmedLine.endsWith('專案合作備忘錄')) {
-            return `<h2 style="font-size: 1.5em; font-weight: bold; text-align: center; margin-bottom: 32px;">${trimmedLine}</h2>`;
-        }
-        if (/^[一二三四五六七八九十]+、/.test(trimmedLine) || trimmedLine === '甲方') {
-            return `<h3 style="font-size: 1.17em; font-weight: bold; margin-top: 24px; margin-bottom: 12px;">${trimmedLine}</h3>`;
-        }
-        if (trimmedLine.startsWith('姓名：')) {
-            const nameMatch = line.match(/^(姓名：)([_＿]+)(（.*)$/);
-            if (nameMatch) {
-                const [, prefix, signaturePlaceholder, suffix] = nameMatch;
-                return `
-                    <div data-signature-name-line style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px;">
-                        <span>${prefix}</span>
-                        <span style="position: relative; display: inline-flex; min-width: 220px; max-width: 320px; align-items: center; justify-content: center; padding: 16px 32px; border: 2px solid #ef4444; border-radius: 4px;">
-                            <span aria-hidden="true" style="font-family: 'Courier New', monospace; font-size: 1.1em; letter-spacing: 0.3em; color: rgba(239, 68, 68, 0.4); user-select: none;">${signaturePlaceholder}</span>
-                            <span data-signature-target style="position: absolute; top: 8px; right: 8px; bottom: 8px; left: 8px; border-radius: 4px;"></span>
-                        </span>
-                        <span>${suffix}</span>
-                    </div>
-                `;
+const generateStyledHtmlForExport = (content: string): string => {
+    if (!content) return '';
+    const htmlLines = content.split('\n').map(renderContractLineToHtml).join('');
+    return `
+        <div style="font-family: 'Noto Sans TC', 'Noto Sans CJK TC', 'Source Han Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif; font-size: 12pt; line-height: 1.75; letter-spacing: normal;">
+            ${htmlLines}
+        </div>
+    `;
+};
+
+const PRINTABLE_CANVAS_WIDTH_PX = 794;
+
+interface PrintableSignatureLayer {
+    dataUrl: string;
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+}
+
+const buildPrintableContractFragments = (
+    content: string,
+    signatureLayer?: PrintableSignatureLayer
+) => {
+    const bodyContent = content
+        ? content.split('\n').map(line => {
+            const trimmedLine = line.trim();
+
+            if (trimmedLine === '乙方') {
+                return `<div class="printable-subsection" data-signature-section="乙方"><h3>${escapeHtml(trimmedLine)}</h3></div>`;
             }
-            return `<p data-signature-name-line style="${basePStyle}">${line}</p>`;
-        }
-        if (/^\d+(\.\d+)*\s/.test(trimmedLine)) {
-            return `<p style="${basePStyle} padding-left: 1.5em; text-indent: -1.5em;">${line}</p>`;
-        }
-        if (trimmedLine === '') {
-            return `<div style="height: 0.5em;"></div>`;
-        }
-        return `<p style="${basePStyle}">${line}</p>`;
-    };
-    
-    const htmlLines = content.split('\n').map(renderLineToHtml).join('');
-    return `<div style="font-family: 'Times New Roman', Times, serif; font-size: 12pt; font-variant-numeric: lining-nums;">${htmlLines}</div>`;
+
+            if (trimmedLine.endsWith('專案合作備忘錄')) {
+                return `<h2 class="printable-title">${escapeHtml(trimmedLine)}</h2>`;
+            }
+
+            if (/^[一二三四五六七八九十]+、/.test(trimmedLine) || trimmedLine === '甲方') {
+                return `<h3 class="printable-heading">${escapeHtml(trimmedLine)}</h3>`;
+            }
+
+            if (trimmedLine.startsWith('姓名：')) {
+                const nameMatch = line.match(/^(姓名：)([_＿]+)(（.*)$/);
+                if (nameMatch) {
+                    const [, prefix, signaturePlaceholder, suffix] = nameMatch;
+                    return `
+                        <div class="printable-signature-row" data-signature-name-line>
+                            <span>${escapeHtml(prefix)}</span>
+                            <span class="printable-signature-slot">
+                                <span aria-hidden="true" class="printable-signature-placeholder">${escapeHtml(signaturePlaceholder)}</span>
+                                <span data-signature-target class="printable-signature-target"></span>
+                            </span>
+                            <span>${escapeHtml(suffix)}</span>
+                        </div>
+                    `;
+                }
+                return `<p class="printable-paragraph" data-signature-name-line>${escapeHtml(line)}</p>`;
+            }
+
+            if (/^\d+(\.\d+)*\s/.test(trimmedLine)) {
+                return `<p class="printable-paragraph printable-numbered">${escapeHtml(line)}</p>`;
+            }
+
+            if (trimmedLine === '') {
+                return '<div class="printable-spacer"></div>';
+            }
+
+            return `<p class="printable-paragraph">${escapeHtml(line)}</p>`;
+        }).join('')
+        : '';
+
+    const signatureLayerHtml = signatureLayer
+        ? `<img src="${signatureLayer.dataUrl}" alt="簽名" class="printable-signature-image" style="left: ${signatureLayer.left}px; top: ${signatureLayer.top}px; width: ${signatureLayer.width}px; height: ${signatureLayer.height}px;" />`
+        : '';
+
+    const styleTag = `
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap');
+            html, body {
+                margin: 0;
+                padding: 0;
+                background: #f5f5f5;
+            }
+            body {
+                font-family: 'Noto Sans TC', 'Noto Sans CJK TC', 'Source Han Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+                letter-spacing: normal;
+            }
+            .printable-root {
+                width: 100%;
+                display: flex;
+                justify-content: center;
+                padding: 32px 16px;
+                box-sizing: border-box;
+            }
+            .printable-contract {
+                position: relative;
+                width: ${PRINTABLE_CANVAS_WIDTH_PX}px;
+                background: #ffffff;
+                color: #111827;
+                padding: 48px 64px;
+                box-sizing: border-box;
+                box-shadow: none;
+                border-radius: 4px;
+                letter-spacing: normal;
+            }
+            .printable-contract * {
+                font-family: 'Noto Sans TC', 'Noto Sans CJK TC', 'Source Han Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+                letter-spacing: normal;
+            }
+            .printable-title {
+                font-size: 1.5em;
+                font-weight: 700;
+                text-align: center;
+                margin: 0 0 32px;
+            }
+            .printable-heading {
+                font-size: 1.17em;
+                font-weight: 700;
+                margin: 24px 0 12px;
+            }
+            .printable-subsection h3 {
+                font-size: 1.17em;
+                font-weight: 700;
+                margin: 0 0 12px;
+            }
+            .printable-paragraph {
+                margin: 0 0 12px;
+                line-height: 1.75;
+                text-align: justify;
+                white-space: pre-wrap;
+                word-break: break-word;
+            }
+            .printable-numbered {
+                padding-left: 1.5em;
+                text-indent: -1.5em;
+            }
+            .printable-spacer {
+                height: 8px;
+            }
+            .printable-signature-row {
+                display: flex;
+                flex-wrap: wrap;
+                align-items: center;
+                gap: 12px;
+                margin-bottom: 12px;
+            }
+            .printable-signature-slot {
+                position: relative;
+                display: inline-flex;
+                min-width: 220px;
+                max-width: 320px;
+                padding: 16px 32px;
+                border: 2px solid #ef4444;
+                border-radius: 4px;
+                align-items: center;
+                justify-content: center;
+            }
+            .printable-signature-placeholder {
+                font-family: 'Courier New', monospace;
+                font-size: 1.1em;
+                color: rgba(239, 68, 68, 0.4);
+                letter-spacing: normal;
+                user-select: none;
+            }
+            .printable-signature-target {
+                position: absolute;
+                top: 8px;
+                right: 8px;
+                bottom: 8px;
+                left: 8px;
+                border-radius: 4px;
+            }
+            .printable-signature-image {
+                position: absolute;
+                pointer-events: none;
+                object-fit: contain;
+            }
+        </style>
+    `;
+
+    const bodyHtml = `
+        <div class="printable-root">
+            <div class="printable-contract" data-printable-contract>
+                ${bodyContent}
+                ${signatureLayerHtml}
+            </div>
+        </div>
+    `;
+
+    const documentHtml = `<!DOCTYPE html><html lang="zh-Hant"><head><meta charset="utf-8" />${styleTag}</head><body>${bodyHtml}</body></html>`;
+
+    return { styleTag, bodyHtml, documentHtml };
+};
+
+const downloadPrintableHtml = (html: string, filename: string) => {
+    const htmlBlob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const htmlUrl = URL.createObjectURL(htmlBlob);
+    const htmlLink = document.createElement('a');
+    htmlLink.href = htmlUrl;
+    htmlLink.download = filename;
+    htmlLink.style.display = 'none';
+    document.body.appendChild(htmlLink);
+    htmlLink.click();
+    document.body.removeChild(htmlLink);
+    setTimeout(() => URL.revokeObjectURL(htmlUrl), 1000);
 };
 
 
@@ -410,6 +625,7 @@ const SIGNATURE_SCALE_MIN = 0.1;
 const SIGNATURE_SCALE_MAX = 2;
 
 const SHARE_PREFIX = 'c.';
+const SHORT_ID_PATTERN = /^[0-9A-Za-z]{8}$/;
 
 const toBase64Url = (bytes: Uint8Array): string => {
     if (bytes.length === 0) {
@@ -574,7 +790,17 @@ const decodeSharePayload = (encoded: string): SharePayload => {
     return JSON.parse(decoder.decode(bytes)) as SharePayload;
 };
 
-const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob | null> => {
+interface PrintablePdfOptions {
+    content: string;
+    signatureLayer?: PrintableSignatureLayer;
+}
+
+interface PrintablePdfResult {
+    blob: Blob;
+    printableHtml: string;
+}
+
+const createPaginatedPdfBlob = async ({ content, signatureLayer }: PrintablePdfOptions): Promise<PrintablePdfResult | null> => {
     const jspdfLib = (window as any).jspdf;
     const html2canvas = (window as any).html2canvas;
 
@@ -596,32 +822,198 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
     loadingIndicator.style.zIndex = '10000';
     document.body.appendChild(loadingIndicator);
 
+    const printableFragments = buildPrintableContractFragments(content, signatureLayer);
+    const stagingContainer = document.createElement('div');
+
     try {
+        stagingContainer.style.position = 'fixed';
+        stagingContainer.style.left = '-10000px';
+        stagingContainer.style.top = '0';
+        stagingContainer.style.width = '0';
+        stagingContainer.style.height = '0';
+        stagingContainer.style.overflow = 'hidden';
+        stagingContainer.innerHTML = `${printableFragments.styleTag}${printableFragments.bodyHtml}`;
+        document.body.appendChild(stagingContainer);
+
+        const printableElement = stagingContainer.querySelector('[data-printable-contract]') as HTMLElement | null;
+
+        if (!printableElement) {
+            throw new Error('無法建立可列印的合約內容。');
+        }
+
+        printableElement.style.backgroundColor = '#ffffff';
+
+        if ((document as any).fonts?.load) {
+            try {
+                await Promise.all([
+                    (document as any).fonts.load("400 16px 'Noto Sans TC'"),
+                    (document as any).fonts.load("700 16px 'Noto Sans TC'")
+                ]);
+                await (document as any).fonts.ready;
+            } catch (error) {
+                console.warn('字型載入逾時，將使用瀏覽器預設字型。', error);
+            }
+        }
+
         const { jsPDF } = jspdfLib;
         const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
 
         const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = pdf.internal.pageSize.getHeight();
         const margin = 15;
         const contentWidthMm = pdfWidth - margin * 2;
-        const contentHeightMm = pdf.internal.pageSize.getHeight() - margin * 2;
+        const contentHeightMm = pdfHeight - margin * 2;
 
-        const canvas = await html2canvas(sourceElement, {
-            scale: 2,
+        const deviceScale = typeof window.devicePixelRatio === 'number'
+            ? Math.min(Math.max(window.devicePixelRatio, 1.5), 2.5)
+            : 2;
+
+        const canvas = await html2canvas(printableElement, {
+            scale: deviceScale,
             backgroundColor: '#ffffff',
             useCORS: true,
-            scrollY: -window.scrollY
+            scrollY: 0
         });
+
+        const baseCanvasContext = canvas.getContext('2d');
 
         let pageHeightPx = Math.floor((canvas.width * contentHeightMm) / contentWidthMm);
         if (pageHeightPx <= 0) {
             pageHeightPx = canvas.height;
         }
-        const totalPages = Math.ceil(canvas.height / pageHeightPx);
+        const overlapPx = Math.min(
+            Math.max(48, Math.round(pageHeightPx * 0.08)),
+            Math.floor(pageHeightPx / 2)
+        );
+
+        const rowWhitespaceCache = new Map<number, boolean>();
+        const rowDensityCache = new Map<number, number>();
+        const rowSampleStep = Math.max(1, Math.floor(canvas.width / 600));
+        const whitenessThreshold = 0.028;
+
+        const computeRowContentRatio = (rowY: number): number => {
+            if (!baseCanvasContext) {
+                return 0;
+            }
+
+            const clampedRow = Math.max(0, Math.min(canvas.height - 1, Math.floor(rowY)));
+            if (rowDensityCache.has(clampedRow)) {
+                return rowDensityCache.get(clampedRow) ?? 0;
+            }
+
+            const windowHalfHeight = Math.max(1, Math.min(6, Math.floor(pageHeightPx * 0.004)));
+            const windowTop = Math.max(0, clampedRow - windowHalfHeight);
+            const windowHeight = Math.min(canvas.height - windowTop, windowHalfHeight * 2 + 1);
+
+            const imageData = baseCanvasContext.getImageData(0, windowTop, canvas.width, windowHeight);
+            const data = imageData.data;
+
+            let coloredSampleCount = 0;
+            let totalSampleCount = 0;
+
+            for (let row = 0; row < windowHeight; row += 1) {
+                const rowOffset = row * canvas.width * 4;
+                for (let x = 0; x < canvas.width; x += rowSampleStep) {
+                    const index = rowOffset + x * 4;
+                    const alpha = data[index + 3];
+                    if (alpha < 180) {
+                        continue;
+                    }
+
+                    totalSampleCount += 1;
+
+                    const red = data[index];
+                    const green = data[index + 1];
+                    const blue = data[index + 2];
+                    const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+                    const distanceFromWhite = 255 - luminance;
+                    const channelSpread = Math.max(red, green, blue) - Math.min(red, green, blue);
+
+                    if (distanceFromWhite > 10 || channelSpread > 14) {
+                        coloredSampleCount += 1;
+                    }
+                }
+            }
+
+            const ratio = totalSampleCount === 0
+                ? 0
+                : coloredSampleCount / totalSampleCount;
+
+            rowDensityCache.set(clampedRow, ratio);
+            rowWhitespaceCache.set(clampedRow, ratio <= whitenessThreshold);
+            return ratio;
+        };
+
+        const rowIsMostlyWhitespace = (rowY: number): boolean => {
+            if (!baseCanvasContext) {
+                return true;
+            }
+
+            const clampedRow = Math.max(0, Math.min(canvas.height - 1, Math.floor(rowY)));
+            if (rowWhitespaceCache.has(clampedRow)) {
+                return rowWhitespaceCache.get(clampedRow) ?? true;
+            }
+
+            const ratio = computeRowContentRatio(clampedRow);
+            return ratio <= whitenessThreshold;
+        };
+
+        const findSafePageBottom = (targetBottom: number): number => {
+            if (!baseCanvasContext) {
+                return targetBottom;
+            }
+
+            const desired = Math.max(0, Math.min(canvas.height, Math.floor(targetBottom)));
+            const searchRadius = Math.min(
+                Math.max(260, Math.floor(pageHeightPx * 0.4)),
+                Math.floor(canvas.height * 0.5)
+            );
+            const candidateStep = Math.max(1, Math.round(rowSampleStep / 2));
+
+            let bestCandidate = desired;
+            let bestScore = Number.POSITIVE_INFINITY;
+
+            const evaluateCandidate = (candidate: number) => {
+                if (candidate <= 0 || candidate >= canvas.height) {
+                    return;
+                }
+
+                const density = computeRowContentRatio(candidate);
+                const whitespacePenalty = rowIsMostlyWhitespace(candidate) ? 0 : density * 12;
+                const distancePenalty = Math.abs(candidate - desired) / Math.max(pageHeightPx, 1);
+                const score = whitespacePenalty + distancePenalty;
+
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestCandidate = candidate;
+                }
+            };
+
+            evaluateCandidate(desired);
+
+            for (let offset = candidateStep; offset <= searchRadius; offset += candidateStep) {
+                evaluateCandidate(desired + offset);
+                evaluateCandidate(desired - offset);
+            }
+
+            if (bestScore === Number.POSITIVE_INFINITY) {
+                return desired;
+            }
+
+            return bestCandidate;
+        };
 
         let pageIndex = 0;
-        while (pageIndex < totalPages) {
-            const startPx = pageIndex * pageHeightPx;
-            const sliceHeight = Math.min(pageHeightPx, canvas.height - startPx);
+        let positionPx = 0;
+        while (positionPx < canvas.height) {
+            const desiredBottom = Math.min(canvas.height, positionPx + pageHeightPx);
+            const safeBottom = findSafePageBottom(desiredBottom);
+            const minimumBottom = Math.min(
+                canvas.height,
+                positionPx + Math.floor(pageHeightPx * 0.65)
+            );
+            const effectiveBottom = Math.max(minimumBottom, Math.min(canvas.height, safeBottom));
+            const sliceHeight = Math.max(1, effectiveBottom - positionPx);
 
             if (sliceHeight <= 0) {
                 break;
@@ -641,7 +1033,7 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
             ctx.drawImage(
                 canvas,
                 0,
-                startPx,
+                positionPx,
                 canvas.width,
                 sliceHeight,
                 0,
@@ -651,22 +1043,53 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
             );
 
             const imgData = pageCanvas.toDataURL('image/jpeg', 0.85);
-            const imgHeightMm = (pageCanvas.height * contentWidthMm) / pageCanvas.width;
+            const widthRatio = contentWidthMm / pageCanvas.width;
+            const heightRatio = contentHeightMm / pageCanvas.height;
+            const renderRatio = Math.min(widthRatio, heightRatio);
+            const renderWidthMm = pageCanvas.width * renderRatio;
+            const renderHeightMm = pageCanvas.height * renderRatio;
+            const horizontalOffset = margin + (contentWidthMm - renderWidthMm) / 2;
 
             if (pageIndex > 0) {
                 pdf.addPage();
             }
 
-            pdf.addImage(imgData, 'JPEG', margin, margin, contentWidthMm, imgHeightMm);
+            pdf.addImage(
+                imgData,
+                'JPEG',
+                Math.max(margin, horizontalOffset),
+                margin,
+                renderWidthMm,
+                Math.min(renderHeightMm, contentHeightMm)
+            );
+
+            const nextPosition = positionPx + sliceHeight;
+            if (nextPosition >= canvas.height) {
+                break;
+            }
+
+            const effectiveOverlap = Math.max(
+                Math.min(overlapPx, Math.floor(sliceHeight * 0.45)),
+                Math.round(pageHeightPx * 0.12),
+                64
+            );
+            const candidateNextStart = nextPosition - effectiveOverlap;
+            positionPx = candidateNextStart > positionPx
+                ? candidateNextStart
+                : nextPosition;
             pageIndex += 1;
         }
 
-        return pdf.output('blob');
+        const blob = pdf.output('blob');
+        return { blob, printableHtml: printableFragments.documentHtml };
     } catch (error) {
         console.error('An error occurred during PDF generation:', error);
         alert('生成 PDF 時發生錯誤，請檢查主控台以獲取更多資訊。');
         return null;
     } finally {
+        if (stagingContainer.parentNode) {
+            stagingContainer.parentNode.removeChild(stagingContainer);
+        }
         if (loadingIndicator.parentNode === document.body) {
             document.body.removeChild(loadingIndicator);
         }
@@ -918,15 +1341,54 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
         event.currentTarget.releasePointerCapture(event.pointerId);
     };
 
+    const buildPrintableSignatureLayer = useCallback((): PrintableSignatureLayer | undefined => {
+        if (!signatureDataUrl || !contractRef.current) {
+            return undefined;
+        }
+
+        const contractRect = contractRef.current.getBoundingClientRect();
+        if (!contractRect.width) {
+            return undefined;
+        }
+
+        const scaleRatio = PRINTABLE_CANVAS_WIDTH_PX / contractRect.width;
+        let signatureWidth = 280;
+        let signatureHeight = 120;
+
+        if (signatureImageRef.current) {
+            const rect = signatureImageRef.current.getBoundingClientRect();
+            signatureWidth = rect.width;
+            signatureHeight = rect.height;
+        }
+
+        return {
+            dataUrl: signatureDataUrl,
+            left: signaturePlacement.x * scaleRatio,
+            top: signaturePlacement.y * scaleRatio,
+            width: signatureWidth * scaleRatio,
+            height: signatureHeight * scaleRatio
+        };
+    }, [signatureDataUrl, signaturePlacement.x, signaturePlacement.y, signaturePlacement.scale]);
+
     const handleShareToLine = async () => {
         if (!contractRef.current) return;
+        if (!contractContent) {
+            alert('無法載入合約內容，請稍後再試。');
+            return;
+        }
         if (!signatureDataUrl) {
             alert('請先簽名並將簽名放置於合約中。');
             return;
         }
 
-        const blob = await createPaginatedPdfBlob(contractRef.current);
-        if (!blob) return;
+        const result = await createPaginatedPdfBlob({
+            content: contractContent,
+            signatureLayer: buildPrintableSignatureLayer()
+        });
+
+        if (!result) return;
+
+        const { blob, printableHtml } = result;
 
         const file = new File([blob], `signed-contract-${payload.id}.pdf`, { type: 'application/pdf' });
         const nav = navigator as any;
@@ -934,6 +1396,7 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
         if (nav.share && typeof nav.share === 'function' && (!nav.canShare || nav.canShare({ files: [file] }))) {
             try {
                 await nav.share({ files: [file], text: '簽署完成的合約 PDF' });
+                downloadPrintableHtml(printableHtml, `signed-contract-${payload.id}.html`);
             } catch (error) {
                 console.error('Share failed', error);
                 alert('分享失敗，請確認裝置是否支援分享。');
@@ -949,13 +1412,25 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
-        alert('已下載包含簽名的 PDF，請於 LINE 中手動分享該檔案。');
+        alert('已下載包含簽名的 PDF 與對應 HTML，請於 LINE 中手動分享該檔案。');
+
+        downloadPrintableHtml(printableHtml, `signed-contract-${payload.id}.html`);
     };
 
     const handleDownloadSignedPdf = async () => {
         if (!contractRef.current) return;
-        const blob = await createPaginatedPdfBlob(contractRef.current);
-        if (!blob) return;
+        if (!contractContent) {
+            alert('無法載入合約內容，請稍後再試。');
+            return;
+        }
+        const result = await createPaginatedPdfBlob({
+            content: contractContent,
+            signatureLayer: buildPrintableSignatureLayer()
+        });
+
+        if (!result) return;
+
+        const { blob, printableHtml } = result;
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
@@ -964,6 +1439,9 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
+
+        downloadPrintableHtml(printableHtml, `signed-contract-${payload.id}.html`);
+        alert('已下載包含簽名的 PDF 與可列印 HTML。');
     };
 
     const copyShareLink = async () => {
@@ -1124,17 +1602,7 @@ const App: React.FC = () => {
     const [generatedContract, setGeneratedContract] = useState('');
     const [activeTab, setActiveTab] = useState('generate');
     const [isTotalFeeManuallySet, setIsTotalFeeManuallySet] = useState(false);
-    const [shareViewPayload, setShareViewPayload] = useState<SharePayload | null>(() => {
-        try {
-            const params = new URLSearchParams(window.location.search);
-            const shareParam = params.get('share');
-            if (!shareParam) return null;
-            return decodeSharePayload(shareParam);
-        } catch (error) {
-            console.error('Failed to parse initial share payload', error);
-            return null;
-        }
-    });
+    const [shareViewPayload, setShareViewPayload] = useState<SharePayload | null>(null);
 
     const templateContentRef = useRef<HTMLTextAreaElement>(null);
 
@@ -1174,18 +1642,70 @@ const App: React.FC = () => {
     ]);
 
     useEffect(() => {
-        const syncShareState = () => {
+        let isCancelled = false;
+
+        const loadFromSearch = async () => {
             const params = new URLSearchParams(window.location.search);
+            const shortId = params.get('id');
             const shareParam = params.get('share');
 
+            if (shortId && SHORT_ID_PATTERN.test(shortId)) {
+                try {
+                    const response = await fetch(`/api/get-contract?id=${shortId}`);
+                    const data = await response.json();
+
+                    if (!response.ok || data?.success === false) {
+                        const message = data?.error ?? `HTTP ${response.status}`;
+                        throw new Error(message);
+                    }
+
+                    const { success: _success, shortId: _id, savedAt: _savedAt, expiresAt: _expiresAt, ...payload } = data;
+
+                    if (!isCancelled) {
+                        setShareViewPayload(payload as SharePayload);
+                    }
+                } catch (error) {
+                    console.error('Failed to load shared contract', error);
+
+                    if (!isCancelled) {
+                        alert(`分享連結載入失敗：${error instanceof Error ? error.message : '未知錯誤'}`);
+
+                        params.delete('id');
+                        const fallbackShare = params.get('share');
+
+                        if (fallbackShare) {
+                            try {
+                                const decoded = decodeSharePayload(fallbackShare);
+                                setShareViewPayload(decoded);
+                            } catch (fallbackError) {
+                                console.error('Failed to decode fallback share payload', fallbackError);
+                                setShareViewPayload(null);
+                                params.delete('share');
+                            }
+                        } else {
+                            setShareViewPayload(null);
+                        }
+
+                        const newSearch = params.toString();
+                        const newUrl = newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname;
+                        window.history.replaceState(null, '', newUrl);
+                    }
+                }
+                return;
+            }
+
             if (!shareParam) {
-                setShareViewPayload(null);
+                if (!isCancelled) {
+                    setShareViewPayload(null);
+                }
                 return;
             }
 
             try {
                 const decoded = decodeSharePayload(shareParam);
-                setShareViewPayload(decoded);
+                if (!isCancelled) {
+                    setShareViewPayload(decoded);
+                }
             } catch (error) {
                 console.error('Failed to decode share payload', error);
                 alert('分享連結無效或已損毀，請重新取得。');
@@ -1193,14 +1713,23 @@ const App: React.FC = () => {
                 const newSearch = params.toString();
                 const newUrl = newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname;
                 window.history.replaceState(null, '', newUrl);
-                setShareViewPayload(null);
+                if (!isCancelled) {
+                    setShareViewPayload(null);
+                }
             }
         };
 
-        syncShareState();
-        const handlePopState = () => syncShareState();
+        const handlePopState = () => {
+            void loadFromSearch();
+        };
+
+        void loadFromSearch();
         window.addEventListener('popstate', handlePopState);
-        return () => window.removeEventListener('popstate', handlePopState);
+
+        return () => {
+            isCancelled = true;
+            window.removeEventListener('popstate', handlePopState);
+        };
     }, []);
     
     const saveNewTemplate = () => {
@@ -1367,19 +1896,18 @@ const App: React.FC = () => {
         document.body.removeChild(fileDownload);
     };
 
-    const exportToPdf = async (elementId: string, filename: string) => {
-        const sourceElement = document.getElementById(elementId);
-        if (!sourceElement) {
-            console.error('PDF export failed: element not found.');
-            alert('PDF 匯出失敗，請稍後再試。');
+    const exportToPdf = async (_elementId: string, filename: string) => {
+        if (!generatedContract) {
+            alert('請先生成合約內容後再匯出 PDF。');
             return;
         }
 
-        const blob = await createPaginatedPdfBlob(sourceElement);
-        if (!blob) {
+        const result = await createPaginatedPdfBlob({ content: generatedContract });
+        if (!result) {
             return;
         }
 
+        const { blob, printableHtml } = result;
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.href = url;
@@ -1388,6 +1916,9 @@ const App: React.FC = () => {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
+
+        downloadPrintableHtml(printableHtml, `${filename}.html`);
+        alert('已下載 PDF 與對應 HTML，可使用 wkhtmltopdf 或 Chromium 匯出更高品質的檔案。');
     };
 
     const handleCreateShareLink = useCallback(async () => {
@@ -1414,27 +1945,65 @@ const App: React.FC = () => {
             formData: prepareFormDataForShare(formData)
         };
 
-        const encoded = encodeSharePayload(payload);
-        const shareUrl = `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(encoded)}`;
+        const legacyEncoded = encodeSharePayload(payload);
+        const legacyUrl = `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(legacyEncoded)}`;
+        const oldUrlLength = legacyUrl.length;
 
-        const previewWindow = window.open(shareUrl, '_blank', 'noopener');
-        if (!previewWindow) {
-            console.warn('分享預覽視窗被瀏覽器阻擋。');
-        }
+        try {
+            const response = await fetch('/api/save-contract', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
 
-        let copied = false;
-        if (navigator.clipboard?.writeText) {
-            try {
-                await navigator.clipboard.writeText(shareUrl);
-                copied = true;
-                alert('分享連結已複製，並已開啟預覽頁面。');
-            } catch (error) {
-                console.warn('Clipboard write failed', error);
+            const result = await response.json();
+
+            if (!response.ok || !result?.success) {
+                const message = result?.error ?? `HTTP ${response.status}`;
+                throw new Error(message);
             }
-        }
 
-        if (!copied) {
-            window.prompt('請複製以下分享連結', shareUrl);
+            const shortUrl: string = result.url;
+            const previewWindow = window.open(shortUrl, '_blank', 'noopener');
+            if (!previewWindow) {
+                console.warn('分享預覽視窗被瀏覽器阻擋。');
+            }
+
+            let copied = false;
+            if (navigator.clipboard?.writeText) {
+                try {
+                    await navigator.clipboard.writeText(shortUrl);
+                    copied = true;
+                } catch (error) {
+                    console.warn('Clipboard write failed', error);
+                }
+            }
+
+            const reduction = ((oldUrlLength - shortUrl.length) / oldUrlLength * 100).toFixed(1);
+
+            if (copied) {
+                alert(
+                    `✅ 超短網址已生成並複製！\n\n${shortUrl}\n\n` +
+                    `📊 統計:\n` +
+                    `• 新網址長度: ${shortUrl.length} 字符\n` +
+                    `• 舊網址長度: ${oldUrlLength} 字符\n` +
+                    `• 縮短比例: ${reduction}%\n` +
+                    `• ID: ${result.shortId}\n\n` +
+                    `預覽頁面已在新視窗開啟`
+                );
+            } else {
+                window.prompt(
+                    `✅ 超短網址已生成！請複製以下連結:\n\n長度: ${shortUrl.length} 字符 (縮短 ${reduction}%)`,
+                    shortUrl
+                );
+            }
+        } catch (error) {
+            console.error('❌ Create share link error:', error);
+            alert(
+                `❌ 生成分享連結失敗\n\n` +
+                `錯誤: ${error instanceof Error ? error.message : '未知錯誤'}\n\n` +
+                `請檢查網路連線、Netlify Functions 設定，或稍後再試。`
+            );
         }
     }, [generatedContract, templates, selectedTemplateId, selectedSections, formData]);
     
