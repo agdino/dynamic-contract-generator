@@ -607,8 +607,12 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
         const contentWidthMm = pdfWidth - margin * 2;
         const contentHeightMm = pdfHeight - margin * 2;
 
+        const deviceScale = typeof window.devicePixelRatio === 'number'
+            ? Math.min(Math.max(window.devicePixelRatio, 1.5), 2.5)
+            : 2;
+
         const canvas = await html2canvas(sourceElement, {
-            scale: 2,
+            scale: deviceScale,
             backgroundColor: '#ffffff',
             useCORS: true,
             scrollY: -window.scrollY
@@ -618,7 +622,10 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
         if (pageHeightPx <= 0) {
             pageHeightPx = canvas.height;
         }
-        const overlapPx = 24;
+        const overlapPx = Math.min(
+            Math.max(48, Math.round(pageHeightPx * 0.08)),
+            Math.floor(pageHeightPx / 2)
+        );
 
         let pageIndex = 0;
         let positionPx = 0;
@@ -673,13 +680,10 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
                 Math.min(renderHeightMm, contentHeightMm)
             );
 
-            positionPx += pageHeightPx;
-            if (overlapPx > 0) {
-                positionPx = Math.max(0, positionPx - overlapPx);
-            }
-
             if (pageHeightPx <= overlapPx) {
-                positionPx += overlapPx;
+                positionPx += pageHeightPx;
+            } else {
+                positionPx += pageHeightPx - overlapPx;
             }
             pageIndex += 1;
         }
