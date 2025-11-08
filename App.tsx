@@ -256,21 +256,30 @@ interface ContractRendererProps {
 const ContractRenderer: React.FC<ContractRendererProps> = ({ content, onSignatureSlotClick, signatureSlotInteractive = false }) => {
     if (!content) return null;
 
+    let activeSignatureSection: string | null = null;
+
     const renderLine = (line: string, index: number) => {
         const trimmedLine = line.trim();
 
         if (trimmedLine === '乙方') {
+            activeSignatureSection = '乙方';
             return (
-                <div key={index} className="mt-6">
+                <div
+                    key={index}
+                    className="mt-6"
+                    data-signature-section="乙方"
+                >
                     <h3 className="text-lg font-bold mb-2">{trimmedLine}</h3>
                 </div>
             );
         }
 
         if (trimmedLine.endsWith('專案合作備忘錄')) {
+            activeSignatureSection = null;
             return <h2 key={index} className="text-2xl font-bold text-center mb-8">{trimmedLine}</h2>;
         }
         if (/^[一二三四五六七八九十]+、/.test(trimmedLine) || trimmedLine === '甲方') {
+            activeSignatureSection = trimmedLine === '甲方' ? '甲方' : null;
             return <h3 key={index} className="text-lg font-bold mt-6 mb-3">{trimmedLine}</h3>;
         }
         if (trimmedLine.startsWith('姓名：')) {
@@ -282,11 +291,13 @@ const ContractRenderer: React.FC<ContractRendererProps> = ({ content, onSignatur
                     'relative inline-flex min-w-[220px] max-w-[320px] flex-shrink-0 items-center justify-center rounded border-2 border-red-500 px-8 py-4',
                     interactive ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500/60 focus:ring-offset-2 focus:ring-offset-white' : ''
                 ].filter(Boolean).join(' ');
+                const signatureSectionAttr = activeSignatureSection ?? undefined;
                 return (
                     <div
                         key={index}
                         className="mb-3 flex flex-wrap items-center gap-3 text-justify"
                         data-signature-name-line
+                        data-signature-section={signatureSectionAttr}
                     >
                         <span>{prefix}</span>
                         <span
@@ -300,6 +311,8 @@ const ContractRenderer: React.FC<ContractRendererProps> = ({ content, onSignatur
                                     onSignatureSlotClick?.();
                                 }
                             } : undefined}
+                            data-signature-slot
+                            data-signature-section={signatureSectionAttr}
                         >
                             <span
                                 aria-hidden="true"
@@ -311,6 +324,7 @@ const ContractRenderer: React.FC<ContractRendererProps> = ({ content, onSignatur
                             <span
                                 data-signature-target
                                 className="absolute inset-2 rounded-sm"
+                                data-signature-section={signatureSectionAttr}
                             />
                         </span>
                         <span>{suffix}</span>
@@ -322,6 +336,7 @@ const ContractRenderer: React.FC<ContractRendererProps> = ({ content, onSignatur
                     key={index}
                     className="mb-2 text-justify"
                     data-signature-name-line
+                    data-signature-section={activeSignatureSection ?? undefined}
                 >
                     {line}
                 </p>
@@ -357,54 +372,69 @@ const escapeHtml = (value: string): string =>
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
 
-const renderContractLineToHtml = (line: string): string => {
-    const trimmedLine = line.trim();
-    const escapedLine = escapeHtml(line);
+const generateStyledHtmlForExport = (content: string): string => {
+    if (!content) return '';
     const baseParagraph = `margin: 0 0 12px; text-align: justify; line-height: 1.75; white-space: pre-wrap; letter-spacing: normal;`;
+    let activeSignatureSection: string | null = null;
+    const htmlLines = content.split('\n').map(line => {
+        const trimmedLine = line.trim();
+        const escapedLine = escapeHtml(line);
 
-    if (trimmedLine === '乙方') {
-        return `
-            <div style="margin-top: 24px; letter-spacing: normal;">
-                <h3 style="font-size: 1.17em; font-weight: 700; margin-bottom: 8px;">${escapeHtml(trimmedLine)}</h3>
-            </div>
-        `;
-    }
-
-    if (trimmedLine.endsWith('專案合作備忘錄')) {
-        return `<h2 style="font-size: 1.5em; font-weight: 700; text-align: center; margin-bottom: 32px; letter-spacing: normal;">${escapeHtml(trimmedLine)}</h2>`;
-    }
-    if (/^[一二三四五六七八九十]+、/.test(trimmedLine) || trimmedLine === '甲方') {
-        return `<h3 style="font-size: 1.17em; font-weight: 700; margin-top: 24px; margin-bottom: 12px; letter-spacing: normal;">${escapeHtml(trimmedLine)}</h3>`;
-    }
-    if (trimmedLine.startsWith('姓名：')) {
-        const nameMatch = line.match(/^(姓名：)([_＿]+)(（.*)$/);
-        if (nameMatch) {
-            const [, prefix, signaturePlaceholder, suffix] = nameMatch;
+        if (trimmedLine === '乙方') {
+            activeSignatureSection = '乙方';
             return `
-                <div data-signature-name-line style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; letter-spacing: normal;">
-                    <span>${escapeHtml(prefix)}</span>
-                    <span style="position: relative; display: inline-flex; min-width: 220px; max-width: 320px; align-items: center; justify-content: center; padding: 16px 32px; border: 2px solid #ef4444; border-radius: 4px;">
-                        <span aria-hidden="true" style="font-family: 'Courier New', monospace; font-size: 1.1em; letter-spacing: normal; color: rgba(239, 68, 68, 0.4); user-select: none;">${escapeHtml(signaturePlaceholder)}</span>
-                        <span data-signature-target style="position: absolute; top: 8px; right: 8px; bottom: 8px; left: 8px; border-radius: 4px;"></span>
-                    </span>
-                    <span>${escapeHtml(suffix)}</span>
+                <div style="margin-top: 24px; letter-spacing: normal;" data-signature-section="乙方">
+                    <h3 style="font-size: 1.17em; font-weight: 700; margin-bottom: 8px;">${escapeHtml(trimmedLine)}</h3>
                 </div>
             `;
         }
-        return `<p data-signature-name-line style="${baseParagraph}">${escapedLine}</p>`;
-    }
-    if (/^\d+(\.\d+)*\s/.test(trimmedLine)) {
-        return `<p style="${baseParagraph} padding-left: 1.5em; text-indent: -1.5em;">${escapedLine}</p>`;
-    }
-    if (trimmedLine === '') {
-        return `<div style="height: 0.5em;"></div>`;
-    }
-    return `<p style="${baseParagraph}">${escapedLine}</p>`;
-};
 
-const generateStyledHtmlForExport = (content: string): string => {
-    if (!content) return '';
-    const htmlLines = content.split('\n').map(renderContractLineToHtml).join('');
+        if (trimmedLine === '甲方') {
+            activeSignatureSection = '甲方';
+            return `<h3 style="font-size: 1.17em; font-weight: 700; margin-top: 24px; margin-bottom: 12px; letter-spacing: normal;">${escapeHtml(trimmedLine)}</h3>`;
+        }
+
+        if (trimmedLine.endsWith('專案合作備忘錄')) {
+            activeSignatureSection = null;
+            return `<h2 style="font-size: 1.5em; font-weight: 700; text-align: center; margin-bottom: 32px; letter-spacing: normal;">${escapeHtml(trimmedLine)}</h2>`;
+        }
+
+        if (/^[一二三四五六七八九十]+、/.test(trimmedLine)) {
+            activeSignatureSection = null;
+            return `<h3 style="font-size: 1.17em; font-weight: 700; margin-top: 24px; margin-bottom: 12px; letter-spacing: normal;">${escapeHtml(trimmedLine)}</h3>`;
+        }
+
+        if (trimmedLine.startsWith('姓名：')) {
+            const nameMatch = line.match(/^(姓名：)([_＿]+)(（.*)$/);
+            if (nameMatch) {
+                const [, prefix, signaturePlaceholder, suffix] = nameMatch;
+                const sectionAttr = activeSignatureSection ? ` data-signature-section="${activeSignatureSection}"` : '';
+                return `
+                    <div data-signature-name-line${sectionAttr} style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 12px; letter-spacing: normal;">
+                        <span>${escapeHtml(prefix)}</span>
+                        <span data-signature-slot${sectionAttr} style="position: relative; display: inline-flex; min-width: 220px; max-width: 320px; align-items: center; justify-content: center; padding: 16px 32px; border: 2px solid #ef4444; border-radius: 4px;">
+                            <span aria-hidden="true" style="font-family: 'Courier New', monospace; font-size: 1.1em; letter-spacing: normal; color: rgba(239, 68, 68, 0.4); user-select: none;">${escapeHtml(signaturePlaceholder)}</span>
+                            <span data-signature-target${sectionAttr} style="position: absolute; top: 8px; right: 8px; bottom: 8px; left: 8px; border-radius: 4px;"></span>
+                        </span>
+                        <span>${escapeHtml(suffix)}</span>
+                    </div>
+                `;
+            }
+            const sectionAttr = activeSignatureSection ? ` data-signature-section="${activeSignatureSection}"` : '';
+            return `<p data-signature-name-line${sectionAttr} style="${baseParagraph}">${escapedLine}</p>`;
+        }
+
+        if (/^\d+(\.\d+)*\s/.test(trimmedLine)) {
+            activeSignatureSection = null;
+            return `<p style="${baseParagraph} padding-left: 1.5em; text-indent: -1.5em;">${escapedLine}</p>`;
+        }
+
+        if (trimmedLine === '') {
+            return `<div style="height: 0.5em;"></div>`;
+        }
+
+        return `<p style="${baseParagraph}">${escapedLine}</p>`;
+    }).join('');
     return `
         <div style="font-family: 'Noto Sans TC', 'Noto Sans CJK TC', 'Source Han Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif; font-size: 12pt; line-height: 1.75; letter-spacing: normal;">
             ${htmlLines}
@@ -426,19 +456,28 @@ const buildPrintableContractFragments = (
     content: string,
     signatureLayer?: PrintableSignatureLayer
 ) => {
+    let activeSignatureSection: string | null = null;
     const bodyContent = content
         ? content.split('\n').map(line => {
             const trimmedLine = line.trim();
 
             if (trimmedLine === '乙方') {
+                activeSignatureSection = '乙方';
                 return `<div class="printable-subsection" data-signature-section="乙方"><h3>${escapeHtml(trimmedLine)}</h3></div>`;
             }
 
+            if (trimmedLine === '甲方') {
+                activeSignatureSection = '甲方';
+                return `<h3 class="printable-heading">${escapeHtml(trimmedLine)}</h3>`;
+            }
+
             if (trimmedLine.endsWith('專案合作備忘錄')) {
+                activeSignatureSection = null;
                 return `<h2 class="printable-title">${escapeHtml(trimmedLine)}</h2>`;
             }
 
-            if (/^[一二三四五六七八九十]+、/.test(trimmedLine) || trimmedLine === '甲方') {
+            if (/^[一二三四五六七八九十]+、/.test(trimmedLine)) {
+                activeSignatureSection = null;
                 return `<h3 class="printable-heading">${escapeHtml(trimmedLine)}</h3>`;
             }
 
@@ -446,21 +485,24 @@ const buildPrintableContractFragments = (
                 const nameMatch = line.match(/^(姓名：)([_＿]+)(（.*)$/);
                 if (nameMatch) {
                     const [, prefix, signaturePlaceholder, suffix] = nameMatch;
+                    const sectionAttr = activeSignatureSection ? ` data-signature-section="${activeSignatureSection}"` : '';
                     return `
-                        <div class="printable-signature-row" data-signature-name-line>
+                        <div class="printable-signature-row" data-signature-name-line${sectionAttr}>
                             <span>${escapeHtml(prefix)}</span>
-                            <span class="printable-signature-slot">
+                            <span class="printable-signature-slot" data-signature-slot${sectionAttr}>
                                 <span aria-hidden="true" class="printable-signature-placeholder">${escapeHtml(signaturePlaceholder)}</span>
-                                <span data-signature-target class="printable-signature-target"></span>
+                                <span data-signature-target class="printable-signature-target"${sectionAttr}></span>
                             </span>
                             <span>${escapeHtml(suffix)}</span>
                         </div>
                     `;
                 }
-                return `<p class="printable-paragraph" data-signature-name-line>${escapeHtml(line)}</p>`;
+                const sectionAttr = activeSignatureSection ? ` data-signature-section="${activeSignatureSection}"` : '';
+                return `<p class="printable-paragraph" data-signature-name-line${sectionAttr}>${escapeHtml(line)}</p>`;
             }
 
             if (/^\d+(\.\d+)*\s/.test(trimmedLine)) {
+                activeSignatureSection = null;
                 return `<p class="printable-paragraph printable-numbered">${escapeHtml(line)}</p>`;
             }
 
@@ -1243,10 +1285,27 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
         }
 
         const contractEl = contractRef.current;
-        const targetNodes = contractEl.querySelectorAll('[data-signature-target]');
-        const fallbackNodes = contractEl.querySelectorAll('[data-signature-name-line]');
-        const target = targetNodes.length ? (targetNodes[targetNodes.length - 1] as HTMLElement) : null;
-        const fallback = !target && fallbackNodes.length ? (fallbackNodes[fallbackNodes.length - 1] as HTMLElement) : null;
+        const targetNodes = Array.from(contractEl.querySelectorAll('[data-signature-target]')) as HTMLElement[];
+        const fallbackNodes = Array.from(contractEl.querySelectorAll('[data-signature-name-line]')) as HTMLElement[];
+
+        const pickPreferredNode = (nodes: HTMLElement[]): HTMLElement | null => {
+            if (!nodes.length) return null;
+            const sectionMatch = nodes.find(node => {
+                const section = node.closest('[data-signature-section]') as HTMLElement | null;
+                return section?.getAttribute('data-signature-section') === '乙方';
+            });
+            if (sectionMatch) {
+                return sectionMatch;
+            }
+            const textMatch = nodes.find(node => (node.textContent ?? '').includes('乙方'));
+            if (textMatch) {
+                return textMatch;
+            }
+            return nodes[nodes.length - 1];
+        };
+
+        const target = pickPreferredNode(targetNodes);
+        const fallback = !target ? pickPreferredNode(fallbackNodes) : null;
         const anchor = target ?? fallback;
 
         if (!anchor) {
@@ -1254,7 +1313,8 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
         }
 
         const containerRect = contractEl.getBoundingClientRect();
-        const anchorRect = anchor.getBoundingClientRect();
+        const slotElement = (anchor.closest('[data-signature-slot]') as HTMLElement | null) ?? anchor.parentElement ?? anchor;
+        const anchorRect = slotElement.getBoundingClientRect();
         const naturalWidth = signatureEl.naturalWidth;
         const naturalHeight = signatureEl.naturalHeight;
 
@@ -1282,8 +1342,11 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
             y -= scaledHeight + 12;
         }
 
-        x = Math.max(x, 0);
-        y = Math.max(y, 0);
+        const maxX = Math.max((contractEl.clientWidth || containerRect.width) - scaledWidth, 0);
+        const maxY = Math.max((contractEl.clientHeight || containerRect.height) - scaledHeight, 0);
+
+        x = Math.min(Math.max(x, 0), maxX);
+        y = Math.min(Math.max(y, 0), maxY);
 
         setSignaturePlacement({ x, y, scale });
     }, [hasManualSignatureAdjustment, signatureDataUrl]);
