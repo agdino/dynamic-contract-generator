@@ -410,6 +410,7 @@ const SIGNATURE_SCALE_MIN = 0.1;
 const SIGNATURE_SCALE_MAX = 2;
 
 const SHARE_PREFIX = 'c.';
+const SHORT_ID_PATTERN = /^[0-9A-Za-z]{8}$/;
 
 const toBase64Url = (bytes: Uint8Array): string => {
     if (bytes.length === 0) {
@@ -1124,17 +1125,7 @@ const App: React.FC = () => {
     const [generatedContract, setGeneratedContract] = useState('');
     const [activeTab, setActiveTab] = useState('generate');
     const [isTotalFeeManuallySet, setIsTotalFeeManuallySet] = useState(false);
-    const [shareViewPayload, setShareViewPayload] = useState<SharePayload | null>(() => {
-        try {
-            const params = new URLSearchParams(window.location.search);
-            const shareParam = params.get('share');
-            if (!shareParam) return null;
-            return decodeSharePayload(shareParam);
-        } catch (error) {
-            console.error('Failed to parse initial share payload', error);
-            return null;
-        }
-    });
+    const [shareViewPayload, setShareViewPayload] = useState<SharePayload | null>(null);
 
     const templateContentRef = useRef<HTMLTextAreaElement>(null);
 
@@ -1174,18 +1165,70 @@ const App: React.FC = () => {
     ]);
 
     useEffect(() => {
-        const syncShareState = () => {
+        let isCancelled = false;
+
+        const loadFromSearch = async () => {
             const params = new URLSearchParams(window.location.search);
+            const shortId = params.get('id');
             const shareParam = params.get('share');
 
+            if (shortId && SHORT_ID_PATTERN.test(shortId)) {
+                try {
+                    const response = await fetch(`/api/get-contract?id=${shortId}`);
+                    const data = await response.json();
+
+                    if (!response.ok || data?.success === false) {
+                        const message = data?.error ?? `HTTP ${response.status}`;
+                        throw new Error(message);
+                    }
+
+                    const { success: _success, shortId: _id, savedAt: _savedAt, expiresAt: _expiresAt, ...payload } = data;
+
+                    if (!isCancelled) {
+                        setShareViewPayload(payload as SharePayload);
+                    }
+                } catch (error) {
+                    console.error('Failed to load shared contract', error);
+
+                    if (!isCancelled) {
+                        alert(`分享連結載入失敗：${error instanceof Error ? error.message : '未知錯誤'}`);
+
+                        params.delete('id');
+                        const fallbackShare = params.get('share');
+
+                        if (fallbackShare) {
+                            try {
+                                const decoded = decodeSharePayload(fallbackShare);
+                                setShareViewPayload(decoded);
+                            } catch (fallbackError) {
+                                console.error('Failed to decode fallback share payload', fallbackError);
+                                setShareViewPayload(null);
+                                params.delete('share');
+                            }
+                        } else {
+                            setShareViewPayload(null);
+                        }
+
+                        const newSearch = params.toString();
+                        const newUrl = newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname;
+                        window.history.replaceState(null, '', newUrl);
+                    }
+                }
+                return;
+            }
+
             if (!shareParam) {
-                setShareViewPayload(null);
+                if (!isCancelled) {
+                    setShareViewPayload(null);
+                }
                 return;
             }
 
             try {
                 const decoded = decodeSharePayload(shareParam);
-                setShareViewPayload(decoded);
+                if (!isCancelled) {
+                    setShareViewPayload(decoded);
+                }
             } catch (error) {
                 console.error('Failed to decode share payload', error);
                 alert('分享連結無效或已損毀，請重新取得。');
@@ -1193,14 +1236,23 @@ const App: React.FC = () => {
                 const newSearch = params.toString();
                 const newUrl = newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname;
                 window.history.replaceState(null, '', newUrl);
-                setShareViewPayload(null);
+                if (!isCancelled) {
+                    setShareViewPayload(null);
+                }
             }
         };
 
-        syncShareState();
-        const handlePopState = () => syncShareState();
+        const handlePopState = () => {
+            void loadFromSearch();
+        };
+
+        void loadFromSearch();
         window.addEventListener('popstate', handlePopState);
-        return () => window.removeEventListener('popstate', handlePopState);
+
+        return () => {
+            isCancelled = true;
+            window.removeEventListener('popstate', handlePopState);
+        };
     }, []);
     
     const saveNewTemplate = () => {
@@ -1414,27 +1466,65 @@ const App: React.FC = () => {
             formData: prepareFormDataForShare(formData)
         };
 
-        const encoded = encodeSharePayload(payload);
-        const shareUrl = `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(encoded)}`;
+        const legacyEncoded = encodeSharePayload(payload);
+        const legacyUrl = `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(legacyEncoded)}`;
+        const oldUrlLength = legacyUrl.length;
 
-        const previewWindow = window.open(shareUrl, '_blank', 'noopener');
-        if (!previewWindow) {
-            console.warn('分享預覽視窗被瀏覽器阻擋。');
-        }
+        try {
+            const response = await fetch('/api/save-contract', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
 
-        let copied = false;
-        if (navigator.clipboard?.writeText) {
-            try {
-                await navigator.clipboard.writeText(shareUrl);
-                copied = true;
-                alert('分享連結已複製，並已開啟預覽頁面。');
-            } catch (error) {
-                console.warn('Clipboard write failed', error);
+            const result = await response.json();
+
+            if (!response.ok || !result?.success) {
+                const message = result?.error ?? `HTTP ${response.status}`;
+                throw new Error(message);
             }
-        }
 
-        if (!copied) {
-            window.prompt('請複製以下分享連結', shareUrl);
+            const shortUrl: string = result.url;
+            const previewWindow = window.open(shortUrl, '_blank', 'noopener');
+            if (!previewWindow) {
+                console.warn('分享預覽視窗被瀏覽器阻擋。');
+            }
+
+            let copied = false;
+            if (navigator.clipboard?.writeText) {
+                try {
+                    await navigator.clipboard.writeText(shortUrl);
+                    copied = true;
+                } catch (error) {
+                    console.warn('Clipboard write failed', error);
+                }
+            }
+
+            const reduction = ((oldUrlLength - shortUrl.length) / oldUrlLength * 100).toFixed(1);
+
+            if (copied) {
+                alert(
+                    `✅ 超短網址已生成並複製！\n\n${shortUrl}\n\n` +
+                    `📊 統計:\n` +
+                    `• 新網址長度: ${shortUrl.length} 字符\n` +
+                    `• 舊網址長度: ${oldUrlLength} 字符\n` +
+                    `• 縮短比例: ${reduction}%\n` +
+                    `• ID: ${result.shortId}\n\n` +
+                    `預覽頁面已在新視窗開啟`
+                );
+            } else {
+                window.prompt(
+                    `✅ 超短網址已生成！請複製以下連結:\n\n長度: ${shortUrl.length} 字符 (縮短 ${reduction}%)`,
+                    shortUrl
+                );
+            }
+        } catch (error) {
+            console.error('❌ Create share link error:', error);
+            alert(
+                `❌ 生成分享連結失敗\n\n` +
+                `錯誤: ${error instanceof Error ? error.message : '未知錯誤'}\n\n` +
+                `請檢查網路連線、Netlify Functions 設定，或稍後再試。`
+            );
         }
     }, [generatedContract, templates, selectedTemplateId, selectedSections, formData]);
     
