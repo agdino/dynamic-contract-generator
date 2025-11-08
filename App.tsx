@@ -602,9 +602,10 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
         const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
 
         const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = pdf.internal.pageSize.getHeight();
         const margin = 15;
         const contentWidthMm = pdfWidth - margin * 2;
-        const contentHeightMm = pdf.internal.pageSize.getHeight() - margin * 2;
+        const contentHeightMm = pdfHeight - margin * 2;
 
         const canvas = await html2canvas(sourceElement, {
             scale: 2,
@@ -617,12 +618,12 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
         if (pageHeightPx <= 0) {
             pageHeightPx = canvas.height;
         }
-        const totalPages = Math.ceil(canvas.height / pageHeightPx);
+        const overlapPx = 24;
 
         let pageIndex = 0;
-        while (pageIndex < totalPages) {
-            const startPx = pageIndex * pageHeightPx;
-            const sliceHeight = Math.min(pageHeightPx, canvas.height - startPx);
+        let positionPx = 0;
+        while (positionPx < canvas.height) {
+            const sliceHeight = Math.min(pageHeightPx, canvas.height - positionPx);
 
             if (sliceHeight <= 0) {
                 break;
@@ -642,7 +643,7 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
             ctx.drawImage(
                 canvas,
                 0,
-                startPx,
+                positionPx,
                 canvas.width,
                 sliceHeight,
                 0,
@@ -652,13 +653,34 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
             );
 
             const imgData = pageCanvas.toDataURL('image/jpeg', 0.85);
-            const imgHeightMm = (pageCanvas.height * contentWidthMm) / pageCanvas.width;
+            const widthRatio = contentWidthMm / pageCanvas.width;
+            const heightRatio = contentHeightMm / pageCanvas.height;
+            const renderRatio = Math.min(widthRatio, heightRatio);
+            const renderWidthMm = pageCanvas.width * renderRatio;
+            const renderHeightMm = pageCanvas.height * renderRatio;
+            const horizontalOffset = margin + (contentWidthMm - renderWidthMm) / 2;
 
             if (pageIndex > 0) {
                 pdf.addPage();
             }
 
-            pdf.addImage(imgData, 'JPEG', margin, margin, contentWidthMm, imgHeightMm);
+            pdf.addImage(
+                imgData,
+                'JPEG',
+                Math.max(margin, horizontalOffset),
+                margin,
+                renderWidthMm,
+                Math.min(renderHeightMm, contentHeightMm)
+            );
+
+            positionPx += pageHeightPx;
+            if (overlapPx > 0) {
+                positionPx = Math.max(0, positionPx - overlapPx);
+            }
+
+            if (pageHeightPx <= overlapPx) {
+                positionPx += overlapPx;
+            }
             pageIndex += 1;
         }
 
