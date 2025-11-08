@@ -618,6 +618,8 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
             scrollY: -window.scrollY
         });
 
+        const baseCanvasContext = canvas.getContext('2d');
+
         let pageHeightPx = Math.floor((canvas.width * contentHeightMm) / contentWidthMm);
         if (pageHeightPx <= 0) {
             pageHeightPx = canvas.height;
@@ -627,10 +629,93 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
             Math.floor(pageHeightPx / 2)
         );
 
+        const rowWhitespaceCache = new Map<number, boolean>();
+        const rowSampleStep = Math.max(1, Math.floor(canvas.width / 600));
+        const rowColorTolerance = Math.max(6, Math.floor(canvas.width / (rowSampleStep * 90)));
+
+        const rowIsMostlyWhitespace = (rowY: number): boolean => {
+            if (!baseCanvasContext) {
+                return true;
+            }
+            const clampedRow = Math.max(0, Math.min(canvas.height - 1, Math.floor(rowY)));
+            if (rowWhitespaceCache.has(clampedRow)) {
+                return rowWhitespaceCache.get(clampedRow) ?? true;
+            }
+
+            const imageData = baseCanvasContext.getImageData(0, clampedRow, canvas.width, 1);
+            const data = imageData.data;
+            let coloredPixelCount = 0;
+            for (let x = 0; x < canvas.width; x += rowSampleStep) {
+                const index = x * 4;
+                const alpha = data[index + 3];
+                if (alpha > 220) {
+                    const red = data[index];
+                    const green = data[index + 1];
+                    const blue = data[index + 2];
+                    if (red < 245 || green < 245 || blue < 245) {
+                        coloredPixelCount += 1;
+                        if (coloredPixelCount > rowColorTolerance) {
+                            rowWhitespaceCache.set(clampedRow, false);
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            rowWhitespaceCache.set(clampedRow, true);
+            return true;
+        };
+
+        const findSafePageBottom = (targetBottom: number): number => {
+            if (!baseCanvasContext) {
+                return targetBottom;
+            }
+
+            const desired = Math.max(0, Math.min(canvas.height, Math.floor(targetBottom)));
+            const searchRadius = Math.min(180, Math.floor(pageHeightPx * 0.25));
+
+            let bestCandidate = desired;
+            let bestDistance = Number.POSITIVE_INFINITY;
+
+            const considerCandidate = (candidate: number) => {
+                if (candidate <= 0 || candidate >= canvas.height) {
+                    return;
+                }
+                if (!rowIsMostlyWhitespace(candidate)) {
+                    return;
+                }
+                const distance = Math.abs(candidate - desired);
+                if (distance < bestDistance) {
+                    bestDistance = distance;
+                    bestCandidate = candidate;
+                }
+            };
+
+            for (let offset = 0; offset <= searchRadius; offset += 1) {
+                considerCandidate(desired + offset);
+                if (bestDistance === offset) {
+                    break;
+                }
+                considerCandidate(desired - offset);
+                if (bestDistance === offset) {
+                    break;
+                }
+            }
+
+            return bestCandidate;
+        };
+
         let pageIndex = 0;
         let positionPx = 0;
         while (positionPx < canvas.height) {
-            const sliceHeight = Math.min(pageHeightPx, canvas.height - positionPx);
+            const desiredBottom = Math.min(canvas.height, positionPx + pageHeightPx);
+            const safeBottom = findSafePageBottom(desiredBottom);
+            const minimumBottom = Math.min(
+                canvas.height,
+                positionPx + Math.floor(pageHeightPx * 0.65)
+            );
+            const effectiveBottom = Math.max(minimumBottom, Math.min(canvas.height, safeBottom));
+            const sliceHeight = Math.max(1, effectiveBottom - positionPx);
 
             if (sliceHeight <= 0) {
                 break;
@@ -680,11 +765,16 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
                 Math.min(renderHeightMm, contentHeightMm)
             );
 
-            if (pageHeightPx <= overlapPx) {
-                positionPx += pageHeightPx;
-            } else {
-                positionPx += pageHeightPx - overlapPx;
+            const nextPosition = positionPx + sliceHeight;
+            if (nextPosition >= canvas.height) {
+                break;
             }
+
+            const effectiveOverlap = Math.min(overlapPx, Math.floor(sliceHeight * 0.35));
+            const candidateNextStart = nextPosition - effectiveOverlap;
+            positionPx = candidateNextStart > positionPx
+                ? candidateNextStart
+                : nextPosition;
             pageIndex += 1;
         }
 
