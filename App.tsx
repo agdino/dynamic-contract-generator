@@ -630,40 +630,75 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
         );
 
         const rowWhitespaceCache = new Map<number, boolean>();
+        const rowDensityCache = new Map<number, number>();
         const rowSampleStep = Math.max(1, Math.floor(canvas.width / 600));
-        const rowColorTolerance = Math.max(6, Math.floor(canvas.width / (rowSampleStep * 90)));
+        const whitenessThreshold = 0.028;
+
+        const computeRowContentRatio = (rowY: number): number => {
+            if (!baseCanvasContext) {
+                return 0;
+            }
+
+            const clampedRow = Math.max(0, Math.min(canvas.height - 1, Math.floor(rowY)));
+            if (rowDensityCache.has(clampedRow)) {
+                return rowDensityCache.get(clampedRow) ?? 0;
+            }
+
+            const windowHalfHeight = Math.max(1, Math.min(6, Math.floor(pageHeightPx * 0.004)));
+            const windowTop = Math.max(0, clampedRow - windowHalfHeight);
+            const windowHeight = Math.min(canvas.height - windowTop, windowHalfHeight * 2 + 1);
+
+            const imageData = baseCanvasContext.getImageData(0, windowTop, canvas.width, windowHeight);
+            const data = imageData.data;
+
+            let coloredSampleCount = 0;
+            let totalSampleCount = 0;
+
+            for (let row = 0; row < windowHeight; row += 1) {
+                const rowOffset = row * canvas.width * 4;
+                for (let x = 0; x < canvas.width; x += rowSampleStep) {
+                    const index = rowOffset + x * 4;
+                    const alpha = data[index + 3];
+                    if (alpha < 180) {
+                        continue;
+                    }
+
+                    totalSampleCount += 1;
+
+                    const red = data[index];
+                    const green = data[index + 1];
+                    const blue = data[index + 2];
+                    const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+                    const distanceFromWhite = 255 - luminance;
+                    const channelSpread = Math.max(red, green, blue) - Math.min(red, green, blue);
+
+                    if (distanceFromWhite > 10 || channelSpread > 14) {
+                        coloredSampleCount += 1;
+                    }
+                }
+            }
+
+            const ratio = totalSampleCount === 0
+                ? 0
+                : coloredSampleCount / totalSampleCount;
+
+            rowDensityCache.set(clampedRow, ratio);
+            rowWhitespaceCache.set(clampedRow, ratio <= whitenessThreshold);
+            return ratio;
+        };
 
         const rowIsMostlyWhitespace = (rowY: number): boolean => {
             if (!baseCanvasContext) {
                 return true;
             }
+
             const clampedRow = Math.max(0, Math.min(canvas.height - 1, Math.floor(rowY)));
             if (rowWhitespaceCache.has(clampedRow)) {
                 return rowWhitespaceCache.get(clampedRow) ?? true;
             }
 
-            const imageData = baseCanvasContext.getImageData(0, clampedRow, canvas.width, 1);
-            const data = imageData.data;
-            let coloredPixelCount = 0;
-            for (let x = 0; x < canvas.width; x += rowSampleStep) {
-                const index = x * 4;
-                const alpha = data[index + 3];
-                if (alpha > 220) {
-                    const red = data[index];
-                    const green = data[index + 1];
-                    const blue = data[index + 2];
-                    if (red < 245 || green < 245 || blue < 245) {
-                        coloredPixelCount += 1;
-                        if (coloredPixelCount > rowColorTolerance) {
-                            rowWhitespaceCache.set(clampedRow, false);
-                            return false;
-                        }
-                    }
-                }
-            }
-
-            rowWhitespaceCache.set(clampedRow, true);
-            return true;
+            const ratio = computeRowContentRatio(clampedRow);
+            return ratio <= whitenessThreshold;
         };
 
         const findSafePageBottom = (targetBottom: number): number => {
@@ -672,34 +707,40 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
             }
 
             const desired = Math.max(0, Math.min(canvas.height, Math.floor(targetBottom)));
-            const searchRadius = Math.min(180, Math.floor(pageHeightPx * 0.25));
+            const searchRadius = Math.min(
+                Math.max(260, Math.floor(pageHeightPx * 0.4)),
+                Math.floor(canvas.height * 0.5)
+            );
+            const candidateStep = Math.max(1, Math.round(rowSampleStep / 2));
 
             let bestCandidate = desired;
-            let bestDistance = Number.POSITIVE_INFINITY;
+            let bestScore = Number.POSITIVE_INFINITY;
 
-            const considerCandidate = (candidate: number) => {
+            const evaluateCandidate = (candidate: number) => {
                 if (candidate <= 0 || candidate >= canvas.height) {
                     return;
                 }
-                if (!rowIsMostlyWhitespace(candidate)) {
-                    return;
-                }
-                const distance = Math.abs(candidate - desired);
-                if (distance < bestDistance) {
-                    bestDistance = distance;
+
+                const density = computeRowContentRatio(candidate);
+                const whitespacePenalty = rowIsMostlyWhitespace(candidate) ? 0 : density * 12;
+                const distancePenalty = Math.abs(candidate - desired) / Math.max(pageHeightPx, 1);
+                const score = whitespacePenalty + distancePenalty;
+
+                if (score < bestScore) {
+                    bestScore = score;
                     bestCandidate = candidate;
                 }
             };
 
-            for (let offset = 0; offset <= searchRadius; offset += 1) {
-                considerCandidate(desired + offset);
-                if (bestDistance === offset) {
-                    break;
-                }
-                considerCandidate(desired - offset);
-                if (bestDistance === offset) {
-                    break;
-                }
+            evaluateCandidate(desired);
+
+            for (let offset = candidateStep; offset <= searchRadius; offset += candidateStep) {
+                evaluateCandidate(desired + offset);
+                evaluateCandidate(desired - offset);
+            }
+
+            if (bestScore === Number.POSITIVE_INFINITY) {
+                return desired;
             }
 
             return bestCandidate;
@@ -770,7 +811,11 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
                 break;
             }
 
-            const effectiveOverlap = Math.min(overlapPx, Math.floor(sliceHeight * 0.35));
+            const effectiveOverlap = Math.max(
+                Math.min(overlapPx, Math.floor(sliceHeight * 0.45)),
+                Math.round(pageHeightPx * 0.12),
+                64
+            );
             const candidateNextStart = nextPosition - effectiveOverlap;
             positionPx = candidateNextStart > positionPx
                 ? candidateNextStart
