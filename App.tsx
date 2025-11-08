@@ -453,8 +453,7 @@ interface PrintableSignatureLayer {
 }
 
 const buildPrintableContractFragments = (
-    content: string,
-    signatureLayer?: PrintableSignatureLayer
+    content: string
 ) => {
     let activeSignatureSection: string | null = null;
     const bodyContent = content
@@ -514,10 +513,6 @@ const buildPrintableContractFragments = (
         }).join('')
         : '';
 
-    const signatureLayerHtml = signatureLayer
-        ? `<img src="${signatureLayer.dataUrl}" alt="簽名" class="printable-signature-image" style="left: ${signatureLayer.left}px; top: ${signatureLayer.top}px; width: ${signatureLayer.width}px; height: ${signatureLayer.height}px;" />`
-        : '';
-
     const styleTag = `
         <style>
             @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700&display=swap');
@@ -547,6 +542,7 @@ const buildPrintableContractFragments = (
                 box-shadow: none;
                 border-radius: 4px;
                 letter-spacing: normal;
+                break-inside: avoid;
             }
             .printable-contract * {
                 font-family: 'Noto Sans TC', 'Noto Sans CJK TC', 'Source Han Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
@@ -557,16 +553,22 @@ const buildPrintableContractFragments = (
                 font-weight: 700;
                 text-align: center;
                 margin: 0 0 32px;
+                page-break-inside: avoid;
+                break-inside: avoid;
             }
             .printable-heading {
                 font-size: 1.17em;
                 font-weight: 700;
                 margin: 24px 0 12px;
+                page-break-inside: avoid;
+                break-inside: avoid;
             }
             .printable-subsection h3 {
                 font-size: 1.17em;
                 font-weight: 700;
                 margin: 0 0 12px;
+                page-break-inside: avoid;
+                break-inside: avoid;
             }
             .printable-paragraph {
                 margin: 0 0 12px;
@@ -574,6 +576,8 @@ const buildPrintableContractFragments = (
                 text-align: justify;
                 white-space: pre-wrap;
                 word-break: break-word;
+                page-break-inside: avoid;
+                break-inside: avoid;
             }
             .printable-numbered {
                 padding-left: 1.5em;
@@ -588,6 +592,8 @@ const buildPrintableContractFragments = (
                 align-items: center;
                 gap: 12px;
                 margin-bottom: 12px;
+                page-break-inside: avoid;
+                break-inside: avoid;
             }
             .printable-signature-slot {
                 position: relative;
@@ -599,6 +605,8 @@ const buildPrintableContractFragments = (
                 border-radius: 4px;
                 align-items: center;
                 justify-content: center;
+                page-break-inside: avoid;
+                break-inside: avoid;
             }
             .printable-signature-placeholder {
                 font-family: 'Courier New', monospace;
@@ -614,11 +622,17 @@ const buildPrintableContractFragments = (
                 bottom: 8px;
                 left: 8px;
                 border-radius: 4px;
-            }
-            .printable-signature-image {
-                position: absolute;
+                display: flex;
+                align-items: center;
+                justify-content: center;
                 pointer-events: none;
+                overflow: hidden;
+            }
+            .printable-signature-target img {
+                max-width: 100%;
+                max-height: 100%;
                 object-fit: contain;
+                pointer-events: none;
             }
         </style>
     `;
@@ -627,7 +641,6 @@ const buildPrintableContractFragments = (
         <div class="printable-root">
             <div class="printable-contract" data-printable-contract>
                 ${bodyContent}
-                ${signatureLayerHtml}
             </div>
         </div>
     `;
@@ -864,7 +877,7 @@ const createPaginatedPdfBlob = async ({ content, signatureLayer }: PrintablePdfO
     loadingIndicator.style.zIndex = '10000';
     document.body.appendChild(loadingIndicator);
 
-    const printableFragments = buildPrintableContractFragments(content, signatureLayer);
+    const printableFragments = buildPrintableContractFragments(content);
     const stagingContainer = document.createElement('div');
 
     try {
@@ -897,230 +910,63 @@ const createPaginatedPdfBlob = async ({ content, signatureLayer }: PrintablePdfO
             }
         }
 
+        if (signatureLayer) {
+            const preferredSlot = printableElement.querySelector('[data-signature-section="乙方"] [data-signature-target]') as HTMLElement | null;
+            const signatureImage = document.createElement('img');
+            signatureImage.src = signatureLayer.dataUrl;
+            signatureImage.alt = '簽名';
+            signatureImage.style.pointerEvents = 'none';
+
+            if (preferredSlot) {
+                preferredSlot.innerHTML = '';
+                preferredSlot.appendChild(signatureImage);
+                const placeholder = preferredSlot.closest('.printable-signature-slot')?.querySelector('.printable-signature-placeholder') as HTMLElement | null;
+                if (placeholder) {
+                    placeholder.style.visibility = 'hidden';
+                }
+            } else {
+                signatureImage.style.position = 'absolute';
+                signatureImage.style.left = `${signatureLayer.left}px`;
+                signatureImage.style.top = `${signatureLayer.top}px`;
+                signatureImage.style.width = `${signatureLayer.width}px`;
+                signatureImage.style.height = `${signatureLayer.height}px`;
+                signatureImage.style.objectFit = 'contain';
+                printableElement.appendChild(signatureImage);
+            }
+        }
+
         const { jsPDF } = jspdfLib;
         const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
 
         const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = pdf.internal.pageSize.getHeight();
         const margin = 15;
         const contentWidthMm = pdfWidth - margin * 2;
-        const contentHeightMm = pdfHeight - margin * 2;
 
         const deviceScale = typeof window.devicePixelRatio === 'number'
             ? Math.min(Math.max(window.devicePixelRatio, 1.5), 2.5)
             : 2;
 
-        const canvas = await html2canvas(printableElement, {
-            scale: deviceScale,
-            backgroundColor: '#ffffff',
-            useCORS: true,
-            scrollY: 0
+        await new Promise<void>((resolve, reject) => {
+            try {
+                (pdf as any).html(printableElement, {
+                    callback: () => resolve(),
+                    margin: [margin, margin, margin, margin],
+                    autoPaging: 'text',
+                    width: contentWidthMm,
+                    windowWidth: PRINTABLE_CANVAS_WIDTH_PX,
+                    html2canvas: {
+                        scale: deviceScale,
+                        backgroundColor: '#ffffff',
+                        useCORS: true,
+                        scrollX: 0,
+                        scrollY: 0
+                    },
+                    pagebreak: { mode: ['css', 'legacy'] }
+                });
+            } catch (error) {
+                reject(error);
+            }
         });
-
-        const baseCanvasContext = canvas.getContext('2d');
-
-        let pageHeightPx = Math.floor((canvas.width * contentHeightMm) / contentWidthMm);
-        if (pageHeightPx <= 0) {
-            pageHeightPx = canvas.height;
-        }
-        const overlapPx = Math.min(
-            Math.max(48, Math.round(pageHeightPx * 0.08)),
-            Math.floor(pageHeightPx / 2)
-        );
-
-        const rowWhitespaceCache = new Map<number, boolean>();
-        const rowDensityCache = new Map<number, number>();
-        const rowSampleStep = Math.max(1, Math.floor(canvas.width / 600));
-        const whitenessThreshold = 0.028;
-
-        const computeRowContentRatio = (rowY: number): number => {
-            if (!baseCanvasContext) {
-                return 0;
-            }
-
-            const clampedRow = Math.max(0, Math.min(canvas.height - 1, Math.floor(rowY)));
-            if (rowDensityCache.has(clampedRow)) {
-                return rowDensityCache.get(clampedRow) ?? 0;
-            }
-
-            const windowHalfHeight = Math.max(1, Math.min(6, Math.floor(pageHeightPx * 0.004)));
-            const windowTop = Math.max(0, clampedRow - windowHalfHeight);
-            const windowHeight = Math.min(canvas.height - windowTop, windowHalfHeight * 2 + 1);
-
-            const imageData = baseCanvasContext.getImageData(0, windowTop, canvas.width, windowHeight);
-            const data = imageData.data;
-
-            let coloredSampleCount = 0;
-            let totalSampleCount = 0;
-
-            for (let row = 0; row < windowHeight; row += 1) {
-                const rowOffset = row * canvas.width * 4;
-                for (let x = 0; x < canvas.width; x += rowSampleStep) {
-                    const index = rowOffset + x * 4;
-                    const alpha = data[index + 3];
-                    if (alpha < 180) {
-                        continue;
-                    }
-
-                    totalSampleCount += 1;
-
-                    const red = data[index];
-                    const green = data[index + 1];
-                    const blue = data[index + 2];
-                    const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-                    const distanceFromWhite = 255 - luminance;
-                    const channelSpread = Math.max(red, green, blue) - Math.min(red, green, blue);
-
-                    if (distanceFromWhite > 10 || channelSpread > 14) {
-                        coloredSampleCount += 1;
-                    }
-                }
-            }
-
-            const ratio = totalSampleCount === 0
-                ? 0
-                : coloredSampleCount / totalSampleCount;
-
-            rowDensityCache.set(clampedRow, ratio);
-            rowWhitespaceCache.set(clampedRow, ratio <= whitenessThreshold);
-            return ratio;
-        };
-
-        const rowIsMostlyWhitespace = (rowY: number): boolean => {
-            if (!baseCanvasContext) {
-                return true;
-            }
-
-            const clampedRow = Math.max(0, Math.min(canvas.height - 1, Math.floor(rowY)));
-            if (rowWhitespaceCache.has(clampedRow)) {
-                return rowWhitespaceCache.get(clampedRow) ?? true;
-            }
-
-            const ratio = computeRowContentRatio(clampedRow);
-            return ratio <= whitenessThreshold;
-        };
-
-        const findSafePageBottom = (targetBottom: number): number => {
-            if (!baseCanvasContext) {
-                return targetBottom;
-            }
-
-            const desired = Math.max(0, Math.min(canvas.height, Math.floor(targetBottom)));
-            const searchRadius = Math.min(
-                Math.max(260, Math.floor(pageHeightPx * 0.4)),
-                Math.floor(canvas.height * 0.5)
-            );
-            const candidateStep = Math.max(1, Math.round(rowSampleStep / 2));
-
-            let bestCandidate = desired;
-            let bestScore = Number.POSITIVE_INFINITY;
-
-            const evaluateCandidate = (candidate: number) => {
-                if (candidate <= 0 || candidate >= canvas.height) {
-                    return;
-                }
-
-                const density = computeRowContentRatio(candidate);
-                const whitespacePenalty = rowIsMostlyWhitespace(candidate) ? 0 : density * 12;
-                const distancePenalty = Math.abs(candidate - desired) / Math.max(pageHeightPx, 1);
-                const score = whitespacePenalty + distancePenalty;
-
-                if (score < bestScore) {
-                    bestScore = score;
-                    bestCandidate = candidate;
-                }
-            };
-
-            evaluateCandidate(desired);
-
-            for (let offset = candidateStep; offset <= searchRadius; offset += candidateStep) {
-                evaluateCandidate(desired + offset);
-                evaluateCandidate(desired - offset);
-            }
-
-            if (bestScore === Number.POSITIVE_INFINITY) {
-                return desired;
-            }
-
-            return bestCandidate;
-        };
-
-        let pageIndex = 0;
-        let positionPx = 0;
-        while (positionPx < canvas.height) {
-            const desiredBottom = Math.min(canvas.height, positionPx + pageHeightPx);
-            const safeBottom = findSafePageBottom(desiredBottom);
-            const minimumBottom = Math.min(
-                canvas.height,
-                positionPx + Math.floor(pageHeightPx * 0.65)
-            );
-            const effectiveBottom = Math.max(minimumBottom, Math.min(canvas.height, safeBottom));
-            const sliceHeight = Math.max(1, effectiveBottom - positionPx);
-
-            if (sliceHeight <= 0) {
-                break;
-            }
-
-            const pageCanvas = document.createElement('canvas');
-            pageCanvas.width = canvas.width;
-            pageCanvas.height = sliceHeight;
-            const ctx = pageCanvas.getContext('2d');
-
-            if (!ctx) {
-                throw new Error('無法產生 PDF 畫布。');
-            }
-
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, pageCanvas.width, pageCanvas.height);
-            ctx.drawImage(
-                canvas,
-                0,
-                positionPx,
-                canvas.width,
-                sliceHeight,
-                0,
-                0,
-                pageCanvas.width,
-                pageCanvas.height
-            );
-
-            const imgData = pageCanvas.toDataURL('image/jpeg', 0.85);
-            const widthRatio = contentWidthMm / pageCanvas.width;
-            const heightRatio = contentHeightMm / pageCanvas.height;
-            const renderRatio = Math.min(widthRatio, heightRatio);
-            const renderWidthMm = pageCanvas.width * renderRatio;
-            const renderHeightMm = pageCanvas.height * renderRatio;
-            const horizontalOffset = margin + (contentWidthMm - renderWidthMm) / 2;
-
-            if (pageIndex > 0) {
-                pdf.addPage();
-            }
-
-            pdf.addImage(
-                imgData,
-                'JPEG',
-                Math.max(margin, horizontalOffset),
-                margin,
-                renderWidthMm,
-                Math.min(renderHeightMm, contentHeightMm)
-            );
-
-            const nextPosition = positionPx + sliceHeight;
-            if (nextPosition >= canvas.height) {
-                break;
-            }
-
-            const effectiveOverlap = Math.max(
-                Math.min(overlapPx, Math.floor(sliceHeight * 0.45)),
-                Math.round(pageHeightPx * 0.12),
-                64
-            );
-            const candidateNextStart = nextPosition - effectiveOverlap;
-            positionPx = candidateNextStart > positionPx
-                ? candidateNextStart
-                : nextPosition;
-            pageIndex += 1;
-        }
 
         const blob = pdf.output('blob');
         return { blob, printableHtml: printableFragments.documentHtml };
