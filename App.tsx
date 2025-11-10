@@ -1250,6 +1250,7 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
     const [isShareLinkExpanded, setIsShareLinkExpanded] = useState(false);
     const contractRef = useRef<HTMLDivElement>(null);
     const signatureImageRef = useRef<HTMLImageElement>(null);
+    const contractSizeRef = useRef<{ width: number; height: number } | null>(null);
     const dragOffset = useRef({ x: 0, y: 0 });
 
     const shareLink = useMemo(() => window.location.href, []);
@@ -1313,6 +1314,10 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
         }
 
         const containerRect = contractEl.getBoundingClientRect();
+        contractSizeRef.current = {
+            width: containerRect.width,
+            height: containerRect.height
+        };
         const slotElement = (anchor.closest('[data-signature-slot]') as HTMLElement | null) ?? anchor.parentElement ?? anchor;
         const anchorRect = slotElement.getBoundingClientRect();
         const naturalWidth = signatureEl.naturalWidth;
@@ -1369,11 +1374,97 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
         return () => window.removeEventListener('resize', alignSignatureToTarget);
     }, [signatureDataUrl, hasManualSignatureAdjustment, alignSignatureToTarget]);
 
+    useEffect(() => {
+        const element = contractRef.current;
+        if (!element) {
+            return;
+        }
+
+        const updateStoredSize = () => {
+            const rect = element.getBoundingClientRect();
+            contractSizeRef.current = {
+                width: rect.width,
+                height: rect.height
+            };
+        };
+
+        updateStoredSize();
+
+        if (typeof ResizeObserver === 'undefined') {
+            return;
+        }
+
+        const observer = new ResizeObserver(entries => {
+            const entry = entries[0];
+            if (!entry) return;
+
+            const { width, height } = entry.contentRect;
+            if (!width || !height) {
+                return;
+            }
+
+            const previousSize = contractSizeRef.current;
+            contractSizeRef.current = { width, height };
+
+            if (!signatureDataUrl) {
+                return;
+            }
+
+            if (!previousSize) {
+                if (!hasManualSignatureAdjustment) {
+                    alignSignatureToTarget();
+                }
+                return;
+            }
+
+            const widthChanged = Math.abs(previousSize.width - width) > 0.5;
+            const heightChanged = Math.abs(previousSize.height - height) > 0.5;
+
+            if (!widthChanged && !heightChanged) {
+                return;
+            }
+
+            if (hasManualSignatureAdjustment) {
+                const widthRatio = widthChanged && previousSize.width ? width / previousSize.width : 1;
+                const heightRatio = heightChanged && previousSize.height ? height / previousSize.height : 1;
+                setSignaturePlacement(prev => {
+                    const nextScale = Math.min(Math.max(prev.scale * widthRatio, SIGNATURE_SCALE_MIN), SIGNATURE_SCALE_MAX);
+                    let nextX = prev.x * widthRatio;
+                    let nextY = prev.y * heightRatio;
+
+                    const signatureRect = signatureImageRef.current?.getBoundingClientRect();
+                    if (signatureRect) {
+                        const estimatedWidth = signatureRect.width * widthRatio;
+                        const estimatedHeight = signatureRect.height * heightRatio;
+                        const maxX = Math.max(width - estimatedWidth, 0);
+                        const maxY = Math.max(height - estimatedHeight, 0);
+                        nextX = Math.min(Math.max(nextX, 0), maxX);
+                        nextY = Math.min(Math.max(nextY, 0), maxY);
+                    }
+
+                    return { x: nextX, y: nextY, scale: nextScale };
+                });
+            } else {
+                alignSignatureToTarget();
+            }
+        });
+
+        observer.observe(element);
+        return () => observer.disconnect();
+    }, [signatureDataUrl, hasManualSignatureAdjustment, alignSignatureToTarget]);
+
     const handleSignatureConfirm = (dataUrl: string) => {
         setSignatureDataUrl(dataUrl);
         setSignaturePlacement({ x: 40, y: 40, scale: 1 });
         setHasManualSignatureAdjustment(false);
         setIsSignatureModalOpen(false);
+        if (contractRef.current) {
+            const rect = contractRef.current.getBoundingClientRect();
+            contractSizeRef.current = {
+                width: rect.width,
+                height: rect.height
+            };
+        }
     };
 
     const handlePointerDown = (event: React.PointerEvent<HTMLImageElement>) => {
@@ -1410,6 +1501,10 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
         }
 
         const contractRect = contractRef.current.getBoundingClientRect();
+        contractSizeRef.current = {
+            width: contractRect.width,
+            height: contractRect.height
+        };
         if (!contractRect.width) {
             return undefined;
         }
