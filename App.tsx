@@ -410,6 +410,7 @@ const SIGNATURE_SCALE_MIN = 0.1;
 const SIGNATURE_SCALE_MAX = 2;
 
 const SHARE_PREFIX = 'c.';
+const SHORT_ID_PATTERN = /^[0-9A-Za-z]{8}$/;
 
 const toBase64Url = (bytes: Uint8Array): string => {
     if (bytes.length === 0) {
@@ -601,27 +602,161 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
         const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
 
         const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = pdf.internal.pageSize.getHeight();
         const margin = 15;
         const contentWidthMm = pdfWidth - margin * 2;
-        const contentHeightMm = pdf.internal.pageSize.getHeight() - margin * 2;
+        const contentHeightMm = pdfHeight - margin * 2;
+
+        const deviceScale = typeof window.devicePixelRatio === 'number'
+            ? Math.min(Math.max(window.devicePixelRatio, 1.5), 2.5)
+            : 2;
 
         const canvas = await html2canvas(sourceElement, {
-            scale: 2,
+            scale: deviceScale,
             backgroundColor: '#ffffff',
             useCORS: true,
             scrollY: -window.scrollY
         });
 
+        const baseCanvasContext = canvas.getContext('2d');
+
         let pageHeightPx = Math.floor((canvas.width * contentHeightMm) / contentWidthMm);
         if (pageHeightPx <= 0) {
             pageHeightPx = canvas.height;
         }
-        const totalPages = Math.ceil(canvas.height / pageHeightPx);
+        const overlapPx = Math.min(
+            Math.max(48, Math.round(pageHeightPx * 0.08)),
+            Math.floor(pageHeightPx / 2)
+        );
+
+        const rowWhitespaceCache = new Map<number, boolean>();
+        const rowDensityCache = new Map<number, number>();
+        const rowSampleStep = Math.max(1, Math.floor(canvas.width / 600));
+        const whitenessThreshold = 0.028;
+
+        const computeRowContentRatio = (rowY: number): number => {
+            if (!baseCanvasContext) {
+                return 0;
+            }
+
+            const clampedRow = Math.max(0, Math.min(canvas.height - 1, Math.floor(rowY)));
+            if (rowDensityCache.has(clampedRow)) {
+                return rowDensityCache.get(clampedRow) ?? 0;
+            }
+
+            const windowHalfHeight = Math.max(1, Math.min(6, Math.floor(pageHeightPx * 0.004)));
+            const windowTop = Math.max(0, clampedRow - windowHalfHeight);
+            const windowHeight = Math.min(canvas.height - windowTop, windowHalfHeight * 2 + 1);
+
+            const imageData = baseCanvasContext.getImageData(0, windowTop, canvas.width, windowHeight);
+            const data = imageData.data;
+
+            let coloredSampleCount = 0;
+            let totalSampleCount = 0;
+
+            for (let row = 0; row < windowHeight; row += 1) {
+                const rowOffset = row * canvas.width * 4;
+                for (let x = 0; x < canvas.width; x += rowSampleStep) {
+                    const index = rowOffset + x * 4;
+                    const alpha = data[index + 3];
+                    if (alpha < 180) {
+                        continue;
+                    }
+
+                    totalSampleCount += 1;
+
+                    const red = data[index];
+                    const green = data[index + 1];
+                    const blue = data[index + 2];
+                    const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+                    const distanceFromWhite = 255 - luminance;
+                    const channelSpread = Math.max(red, green, blue) - Math.min(red, green, blue);
+
+                    if (distanceFromWhite > 10 || channelSpread > 14) {
+                        coloredSampleCount += 1;
+                    }
+                }
+            }
+
+            const ratio = totalSampleCount === 0
+                ? 0
+                : coloredSampleCount / totalSampleCount;
+
+            rowDensityCache.set(clampedRow, ratio);
+            rowWhitespaceCache.set(clampedRow, ratio <= whitenessThreshold);
+            return ratio;
+        };
+
+        const rowIsMostlyWhitespace = (rowY: number): boolean => {
+            if (!baseCanvasContext) {
+                return true;
+            }
+
+            const clampedRow = Math.max(0, Math.min(canvas.height - 1, Math.floor(rowY)));
+            if (rowWhitespaceCache.has(clampedRow)) {
+                return rowWhitespaceCache.get(clampedRow) ?? true;
+            }
+
+            const ratio = computeRowContentRatio(clampedRow);
+            return ratio <= whitenessThreshold;
+        };
+
+        const findSafePageBottom = (targetBottom: number): number => {
+            if (!baseCanvasContext) {
+                return targetBottom;
+            }
+
+            const desired = Math.max(0, Math.min(canvas.height, Math.floor(targetBottom)));
+            const searchRadius = Math.min(
+                Math.max(260, Math.floor(pageHeightPx * 0.4)),
+                Math.floor(canvas.height * 0.5)
+            );
+            const candidateStep = Math.max(1, Math.round(rowSampleStep / 2));
+
+            let bestCandidate = desired;
+            let bestScore = Number.POSITIVE_INFINITY;
+
+            const evaluateCandidate = (candidate: number) => {
+                if (candidate <= 0 || candidate >= canvas.height) {
+                    return;
+                }
+
+                const density = computeRowContentRatio(candidate);
+                const whitespacePenalty = rowIsMostlyWhitespace(candidate) ? 0 : density * 12;
+                const distancePenalty = Math.abs(candidate - desired) / Math.max(pageHeightPx, 1);
+                const score = whitespacePenalty + distancePenalty;
+
+                if (score < bestScore) {
+                    bestScore = score;
+                    bestCandidate = candidate;
+                }
+            };
+
+            evaluateCandidate(desired);
+
+            for (let offset = candidateStep; offset <= searchRadius; offset += candidateStep) {
+                evaluateCandidate(desired + offset);
+                evaluateCandidate(desired - offset);
+            }
+
+            if (bestScore === Number.POSITIVE_INFINITY) {
+                return desired;
+            }
+
+            return bestCandidate;
+        };
 
         let pageIndex = 0;
-        while (pageIndex < totalPages) {
-            const startPx = pageIndex * pageHeightPx;
-            const sliceHeight = Math.min(pageHeightPx, canvas.height - startPx);
+        let positionPx = 0;
+        while (positionPx < canvas.height) {
+            const desiredBottom = Math.min(canvas.height, positionPx + pageHeightPx);
+            const safeBottom = findSafePageBottom(desiredBottom);
+            const minimumBottom = Math.min(
+                canvas.height,
+                positionPx + Math.floor(pageHeightPx * 0.65)
+            );
+            const effectiveBottom = Math.max(minimumBottom, Math.min(canvas.height, safeBottom));
+            const sliceHeight = Math.max(1, effectiveBottom - positionPx);
 
             if (sliceHeight <= 0) {
                 break;
@@ -641,7 +776,7 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
             ctx.drawImage(
                 canvas,
                 0,
-                startPx,
+                positionPx,
                 canvas.width,
                 sliceHeight,
                 0,
@@ -651,13 +786,40 @@ const createPaginatedPdfBlob = async (sourceElement: HTMLElement): Promise<Blob 
             );
 
             const imgData = pageCanvas.toDataURL('image/jpeg', 0.85);
-            const imgHeightMm = (pageCanvas.height * contentWidthMm) / pageCanvas.width;
+            const widthRatio = contentWidthMm / pageCanvas.width;
+            const heightRatio = contentHeightMm / pageCanvas.height;
+            const renderRatio = Math.min(widthRatio, heightRatio);
+            const renderWidthMm = pageCanvas.width * renderRatio;
+            const renderHeightMm = pageCanvas.height * renderRatio;
+            const horizontalOffset = margin + (contentWidthMm - renderWidthMm) / 2;
 
             if (pageIndex > 0) {
                 pdf.addPage();
             }
 
-            pdf.addImage(imgData, 'JPEG', margin, margin, contentWidthMm, imgHeightMm);
+            pdf.addImage(
+                imgData,
+                'JPEG',
+                Math.max(margin, horizontalOffset),
+                margin,
+                renderWidthMm,
+                Math.min(renderHeightMm, contentHeightMm)
+            );
+
+            const nextPosition = positionPx + sliceHeight;
+            if (nextPosition >= canvas.height) {
+                break;
+            }
+
+            const effectiveOverlap = Math.max(
+                Math.min(overlapPx, Math.floor(sliceHeight * 0.45)),
+                Math.round(pageHeightPx * 0.12),
+                64
+            );
+            const candidateNextStart = nextPosition - effectiveOverlap;
+            positionPx = candidateNextStart > positionPx
+                ? candidateNextStart
+                : nextPosition;
             pageIndex += 1;
         }
 
@@ -1124,17 +1286,7 @@ const App: React.FC = () => {
     const [generatedContract, setGeneratedContract] = useState('');
     const [activeTab, setActiveTab] = useState('generate');
     const [isTotalFeeManuallySet, setIsTotalFeeManuallySet] = useState(false);
-    const [shareViewPayload, setShareViewPayload] = useState<SharePayload | null>(() => {
-        try {
-            const params = new URLSearchParams(window.location.search);
-            const shareParam = params.get('share');
-            if (!shareParam) return null;
-            return decodeSharePayload(shareParam);
-        } catch (error) {
-            console.error('Failed to parse initial share payload', error);
-            return null;
-        }
-    });
+    const [shareViewPayload, setShareViewPayload] = useState<SharePayload | null>(null);
 
     const templateContentRef = useRef<HTMLTextAreaElement>(null);
 
@@ -1174,18 +1326,70 @@ const App: React.FC = () => {
     ]);
 
     useEffect(() => {
-        const syncShareState = () => {
+        let isCancelled = false;
+
+        const loadFromSearch = async () => {
             const params = new URLSearchParams(window.location.search);
+            const shortId = params.get('id');
             const shareParam = params.get('share');
 
+            if (shortId && SHORT_ID_PATTERN.test(shortId)) {
+                try {
+                    const response = await fetch(`/api/get-contract?id=${shortId}`);
+                    const data = await response.json();
+
+                    if (!response.ok || data?.success === false) {
+                        const message = data?.error ?? `HTTP ${response.status}`;
+                        throw new Error(message);
+                    }
+
+                    const { success: _success, shortId: _id, savedAt: _savedAt, expiresAt: _expiresAt, ...payload } = data;
+
+                    if (!isCancelled) {
+                        setShareViewPayload(payload as SharePayload);
+                    }
+                } catch (error) {
+                    console.error('Failed to load shared contract', error);
+
+                    if (!isCancelled) {
+                        alert(`分享連結載入失敗：${error instanceof Error ? error.message : '未知錯誤'}`);
+
+                        params.delete('id');
+                        const fallbackShare = params.get('share');
+
+                        if (fallbackShare) {
+                            try {
+                                const decoded = decodeSharePayload(fallbackShare);
+                                setShareViewPayload(decoded);
+                            } catch (fallbackError) {
+                                console.error('Failed to decode fallback share payload', fallbackError);
+                                setShareViewPayload(null);
+                                params.delete('share');
+                            }
+                        } else {
+                            setShareViewPayload(null);
+                        }
+
+                        const newSearch = params.toString();
+                        const newUrl = newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname;
+                        window.history.replaceState(null, '', newUrl);
+                    }
+                }
+                return;
+            }
+
             if (!shareParam) {
-                setShareViewPayload(null);
+                if (!isCancelled) {
+                    setShareViewPayload(null);
+                }
                 return;
             }
 
             try {
                 const decoded = decodeSharePayload(shareParam);
-                setShareViewPayload(decoded);
+                if (!isCancelled) {
+                    setShareViewPayload(decoded);
+                }
             } catch (error) {
                 console.error('Failed to decode share payload', error);
                 alert('分享連結無效或已損毀，請重新取得。');
@@ -1193,14 +1397,23 @@ const App: React.FC = () => {
                 const newSearch = params.toString();
                 const newUrl = newSearch ? `${window.location.pathname}?${newSearch}` : window.location.pathname;
                 window.history.replaceState(null, '', newUrl);
-                setShareViewPayload(null);
+                if (!isCancelled) {
+                    setShareViewPayload(null);
+                }
             }
         };
 
-        syncShareState();
-        const handlePopState = () => syncShareState();
+        const handlePopState = () => {
+            void loadFromSearch();
+        };
+
+        void loadFromSearch();
         window.addEventListener('popstate', handlePopState);
-        return () => window.removeEventListener('popstate', handlePopState);
+
+        return () => {
+            isCancelled = true;
+            window.removeEventListener('popstate', handlePopState);
+        };
     }, []);
     
     const saveNewTemplate = () => {
@@ -1414,27 +1627,65 @@ const App: React.FC = () => {
             formData: prepareFormDataForShare(formData)
         };
 
-        const encoded = encodeSharePayload(payload);
-        const shareUrl = `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(encoded)}`;
+        const legacyEncoded = encodeSharePayload(payload);
+        const legacyUrl = `${window.location.origin}${window.location.pathname}?share=${encodeURIComponent(legacyEncoded)}`;
+        const oldUrlLength = legacyUrl.length;
 
-        const previewWindow = window.open(shareUrl, '_blank', 'noopener');
-        if (!previewWindow) {
-            console.warn('分享預覽視窗被瀏覽器阻擋。');
-        }
+        try {
+            const response = await fetch('/api/save-contract', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
 
-        let copied = false;
-        if (navigator.clipboard?.writeText) {
-            try {
-                await navigator.clipboard.writeText(shareUrl);
-                copied = true;
-                alert('分享連結已複製，並已開啟預覽頁面。');
-            } catch (error) {
-                console.warn('Clipboard write failed', error);
+            const result = await response.json();
+
+            if (!response.ok || !result?.success) {
+                const message = result?.error ?? `HTTP ${response.status}`;
+                throw new Error(message);
             }
-        }
 
-        if (!copied) {
-            window.prompt('請複製以下分享連結', shareUrl);
+            const shortUrl: string = result.url;
+            const previewWindow = window.open(shortUrl, '_blank', 'noopener');
+            if (!previewWindow) {
+                console.warn('分享預覽視窗被瀏覽器阻擋。');
+            }
+
+            let copied = false;
+            if (navigator.clipboard?.writeText) {
+                try {
+                    await navigator.clipboard.writeText(shortUrl);
+                    copied = true;
+                } catch (error) {
+                    console.warn('Clipboard write failed', error);
+                }
+            }
+
+            const reduction = ((oldUrlLength - shortUrl.length) / oldUrlLength * 100).toFixed(1);
+
+            if (copied) {
+                alert(
+                    `✅ 超短網址已生成並複製！\n\n${shortUrl}\n\n` +
+                    `📊 統計:\n` +
+                    `• 新網址長度: ${shortUrl.length} 字符\n` +
+                    `• 舊網址長度: ${oldUrlLength} 字符\n` +
+                    `• 縮短比例: ${reduction}%\n` +
+                    `• ID: ${result.shortId}\n\n` +
+                    `預覽頁面已在新視窗開啟`
+                );
+            } else {
+                window.prompt(
+                    `✅ 超短網址已生成！請複製以下連結:\n\n長度: ${shortUrl.length} 字符 (縮短 ${reduction}%)`,
+                    shortUrl
+                );
+            }
+        } catch (error) {
+            console.error('❌ Create share link error:', error);
+            alert(
+                `❌ 生成分享連結失敗\n\n` +
+                `錯誤: ${error instanceof Error ? error.message : '未知錯誤'}\n\n` +
+                `請檢查網路連線、Netlify Functions 設定，或稍後再試。`
+            );
         }
     }, [generatedContract, templates, selectedTemplateId, selectedSections, formData]);
     
