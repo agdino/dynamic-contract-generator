@@ -859,10 +859,23 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
         return;
       }
     
-      // 手機適配：計算合適的尺寸
+      // 取得容器實際寬度
       const containerWidth = contractEl.clientWidth || window.innerWidth - 32;
-const baseWidth = Math.min(anchorRect.width * 0.95, containerWidth * 0.9);
-      const desiredWidth = Math.max(baseWidth, Math.min(baseWidth * 1.2, containerWidth * 0.85));
+      
+      // 計算簽名應該佔據的寬度（手機和桌面都考慮）
+      const isMobileView = window.innerWidth < 768;
+      const targetWidthRatio = isMobileView ? 0.85 : 0.95;  // 手機上給更多空間
+      
+      // 根據紅框寬度計算
+      let baseWidth = anchorRect.width * targetWidthRatio;
+      
+      // 但不能超過容器的合理範圍
+      baseWidth = Math.min(baseWidth, containerWidth * 0.9);
+      
+      // 確保最小寬度，防止過度縮小
+      const minWidth = Math.min(200, containerWidth * 0.6);
+      const desiredWidth = Math.max(baseWidth, minWidth);
+
     
       const scale = Math.min(
         Math.max(desiredWidth / naturalWidth, SIGNATURE_SCALE_MIN),
@@ -872,25 +885,32 @@ const baseWidth = Math.min(anchorRect.width * 0.95, containerWidth * 0.9);
       const scaledWidth = naturalWidth * scale;
       const scaledHeight = naturalHeight * scale;
     
-      // 相對於合約容器的位置計算
+      // 計算相對於容器的位置
       let x = anchorRect.left - containerRect.left;
       let y = anchorRect.top - containerRect.top;
-    
+      
+      const isMobileView = window.innerWidth < 768;
+      const padding = isMobileView ? 4 : 8;  // 手機上減少邊距
+      
       if (target) {
-        // 在紅框中央位置
-        x += Math.max((anchorRect.width - scaledWidth) / 2, 0);
-        y += Math.max((anchorRect.height - scaledHeight) / 2, 0);
+        // 在紅框中央位置 - 確保簽名完全在紅框內
+        const centeredX = x + (anchorRect.width - scaledWidth) / 2;
+        const centeredY = y + (anchorRect.height - scaledHeight) / 2;
+        
+        x = Math.max(x + padding, Math.min(centeredX, x + anchorRect.width - scaledWidth - padding));
+        y = Math.max(y + padding, Math.min(centeredY, y + anchorRect.height - scaledHeight - padding));
       } else {
         // 在簽名線上方位置
-        y -= scaledHeight + 8;
+        y = Math.max(0, y - scaledHeight - padding);
       }
-    
-      // 確保簽名不超出邊界（重要！特別是手機上）
-      const maxX = containerRect.width - scaledWidth;
-      const maxY = containerRect.height - scaledHeight;
-    
+      
+      // 確保不超出容器邊界
+      const maxX = Math.max(0, contractEl.clientWidth - scaledWidth);
+      const maxY = Math.max(0, contractEl.clientHeight - scaledHeight);
+      
       x = Math.max(0, Math.min(x, maxX));
       y = Math.max(0, Math.min(y, maxY));
+
     
       setSignaturePlacement({ x, y, scale });
     }, [hasManualSignatureAdjustment, signatureDataUrl]);
