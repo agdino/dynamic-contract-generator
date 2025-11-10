@@ -678,26 +678,43 @@ const SignatureModal: React.FC<{ onClose: () => void; onConfirm: (dataUrl: strin
     const lastPointRef = useRef<{ x: number; y: number } | null>(null);
     const [isDrawing, setIsDrawing] = useState(false);
 
-    useEffect(() => {
-        const canvas = canvasRef.current;
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.strokeStyle = '#111827';
-        ctx.lineWidth = 2;
-        ctx.lineCap = 'round';
-    }, []);
+useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    
+    // 取得設備像素比（手機通常是2x或3x）
+    const dpr = window.devicePixelRatio || 1;
+    
+    // 設定Canvas的實際像素尺寸
+    canvas.width = 900 * dpr;
+    canvas.height = 300 * dpr;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // 根據DPI縮放繪圖上下文
+    ctx.scale(dpr, dpr);
+    
+    // 初始化背景和筆畫風格
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, 900, 300);
+    ctx.strokeStyle = '#111827';
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+  }, []);
 
     const getCanvasCoordinates = (event: React.PointerEvent<HTMLCanvasElement>) => {
-        const canvas = canvasRef.current;
-        if (!canvas) return null;
-        const rect = canvas.getBoundingClientRect();
-        return {
-            x: ((event.clientX - rect.left) / rect.width) * canvas.width,
-            y: ((event.clientY - rect.top) / rect.height) * canvas.height
-        };
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      
+      // 計算實際座標（已考慮DPI）
+      const x = ((event.clientX - rect.left) / rect.width) * (canvas.width / dpr);
+      const y = ((event.clientY - rect.top) / rect.height) * (canvas.height / dpr);
+      
+      return { x, y };
     };
 
     const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -807,73 +824,100 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
     }, [payload]);
 
     const alignSignatureToTarget = useCallback(() => {
-        if (!signatureDataUrl || hasManualSignatureAdjustment) {
-            return;
-        }
-        if (!contractRef.current || !signatureImageRef.current) {
-            return;
-        }
-
-        const signatureEl = signatureImageRef.current;
-        if (!signatureEl.complete || !signatureEl.naturalWidth || !signatureEl.naturalHeight) {
-            return;
-        }
-
-        const contractEl = contractRef.current;
-        const targetNodes = contractEl.querySelectorAll('[data-signature-target]');
-        const fallbackNodes = contractEl.querySelectorAll('[data-signature-name-line]');
-        const target = targetNodes.length ? (targetNodes[targetNodes.length - 1] as HTMLElement) : null;
-        const fallback = !target && fallbackNodes.length ? (fallbackNodes[fallbackNodes.length - 1] as HTMLElement) : null;
-        const anchor = target ?? fallback;
-
-        if (!anchor) {
-            return;
-        }
-
-        const containerRect = contractEl.getBoundingClientRect();
-        const anchorRect = anchor.getBoundingClientRect();
-        const naturalWidth = signatureEl.naturalWidth;
-        const naturalHeight = signatureEl.naturalHeight;
-
-        if (!naturalWidth || !naturalHeight) {
-            return;
-        }
-
-        const containerWidth = contractEl.clientWidth || anchorRect.width;
-        const baseWidth = anchorRect.width || containerWidth * 0.6;
-        const desiredWidth = Math.min(Math.max(baseWidth * 0.9, 220), containerWidth * 0.85);
-        const scale = Math.min(
-            Math.max(desiredWidth / naturalWidth, SIGNATURE_SCALE_MIN),
-            SIGNATURE_SCALE_MAX
-        );
-        const scaledWidth = naturalWidth * scale;
-        const scaledHeight = naturalHeight * scale;
-
-        let x = anchorRect.left - containerRect.left;
-        let y = anchorRect.top - containerRect.top;
-
-        if (target) {
-            x += (anchorRect.width - scaledWidth) / 2;
-            y += (anchorRect.height - scaledHeight) / 2;
-        } else {
-            y -= scaledHeight + 12;
-        }
-
-        x = Math.max(x, 0);
-        y = Math.max(y, 0);
-
-        setSignaturePlacement({ x, y, scale });
+      if (!signatureDataUrl || hasManualSignatureAdjustment) {
+        return;
+      }
+    
+      if (!contractRef.current || !signatureImageRef.current) {
+        return;
+      }
+    
+      const signatureEl = signatureImageRef.current;
+      if (!signatureEl.complete || !signatureEl.naturalWidth || !signatureEl.naturalHeight) {
+        return;
+      }
+    
+      const contractEl = contractRef.current;
+      const targetNodes = contractEl.querySelectorAll('[data-signature-target]');
+      const fallbackNodes = contractEl.querySelectorAll('[data-signature-name-line]');
+    
+      const target = targetNodes.length ? (targetNodes[targetNodes.length - 1] as HTMLElement) : null;
+      const fallback = !target && fallbackNodes.length ? (fallbackNodes[fallbackNodes.length - 1] as HTMLElement) : null;
+      const anchor = target ?? fallback;
+    
+      if (!anchor) {
+        return;
+      }
+    
+      const containerRect = contractEl.getBoundingClientRect();
+      const anchorRect = anchor.getBoundingClientRect();
+    
+      const naturalWidth = signatureEl.naturalWidth;
+      const naturalHeight = signatureEl.naturalHeight;
+    
+      if (!naturalWidth || !naturalHeight) {
+        return;
+      }
+    
+      // 手機適配：計算合適的尺寸
+      const containerWidth = contractEl.clientWidth || window.innerWidth - 32;
+      const baseWidth = Math.max(anchorRect.width * 0.9, 150);
+      const desiredWidth = Math.min(Math.max(baseWidth, 220), containerWidth * 0.85);
+    
+      const scale = Math.min(
+        Math.max(desiredWidth / naturalWidth, SIGNATURE_SCALE_MIN),
+        SIGNATURE_SCALE_MAX
+      );
+    
+      const scaledWidth = naturalWidth * scale;
+      const scaledHeight = naturalHeight * scale;
+    
+      // 相對於合約容器的位置計算
+      let x = anchorRect.left - containerRect.left;
+      let y = anchorRect.top - containerRect.top;
+    
+      if (target) {
+        // 在紅框中央位置
+        x += Math.max((anchorRect.width - scaledWidth) / 2, 0);
+        y += Math.max((anchorRect.height - scaledHeight) / 2, 0);
+      } else {
+        // 在簽名線上方位置
+        y -= scaledHeight + 8;
+      }
+    
+      // 確保簽名不超出邊界（重要！特別是手機上）
+      const maxX = containerRect.width - scaledWidth;
+      const maxY = containerRect.height - scaledHeight;
+    
+      x = Math.max(0, Math.min(x, maxX));
+      y = Math.max(0, Math.min(y, maxY));
+    
+      setSignaturePlacement({ x, y, scale });
     }, [hasManualSignatureAdjustment, signatureDataUrl]);
 
     useEffect(() => {
-        if (!signatureDataUrl) {
-            return;
-        }
-        const id = window.setTimeout(() => {
-            alignSignatureToTarget();
-        }, 0);
-        return () => window.clearTimeout(id);
-    }, [signatureDataUrl, alignSignatureToTarget]);
+      if (!signatureDataUrl || hasManualSignatureAdjustment) {
+        return;
+      }
+  
+      let resizeTimeout: NodeJS.Timeout;
+      
+      const handleResize = () => {
+        clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+          alignSignatureToTarget();
+        }, 100); // 防止過度重新計算
+      };
+  
+      window.addEventListener('resize', handleResize);
+      window.addEventListener('orientationchange', handleResize); // 手機旋轉時重新對齐
+  
+      return () => {
+        clearTimeout(resizeTimeout);
+        window.removeEventListener('resize', handleResize);
+        window.removeEventListener('orientationchange', handleResize);
+      };
+    }, [signatureDataUrl, hasManualSignatureAdjustment, alignSignatureToTarget]);
 
     useEffect(() => {
         if (!signatureDataUrl || hasManualSignatureAdjustment) {
