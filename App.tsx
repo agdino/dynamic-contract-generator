@@ -861,8 +861,8 @@ const SharedContractView: React.FC<{ payload: SharePayload; }> = ({ payload }) =
     
       // 手機適配：計算合適的尺寸
       const containerWidth = contractEl.clientWidth || window.innerWidth - 32;
-      const baseWidth = Math.max(anchorRect.width * 0.9, 150);
-      const desiredWidth = Math.min(Math.max(baseWidth, 220), containerWidth * 0.85);
+const baseWidth = Math.min(anchorRect.width * 0.95, containerWidth * 0.9);
+      const desiredWidth = Math.max(baseWidth, Math.min(baseWidth * 1.2, containerWidth * 0.85));
     
       const scale = Math.min(
         Math.max(desiredWidth / naturalWidth, SIGNATURE_SCALE_MIN),
